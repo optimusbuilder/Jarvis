@@ -1,73 +1,142 @@
-# AURA for Chrome — Context-Aware Web Copilot
+# AURA — Context‑Aware Copilot (Browser + Computer Control)
 
-AURA is a real-time browser copilot that infers what a user is trying to do (researching, applying, writing, comparing, purchasing) from **structured, visible context** and only intervenes when help is likely to be useful.
+AURA is a “Siri‑like” assistant that can **help inside the browser** and (optionally) **take real actions on the user’s computer**—reliably and safely.
 
-This repository is currently **design-first**: it documents the intended implementation, required credentials, and how we will test each feature before writing code.
-
----
-
-## What AURA Does (MVP)
-
-- Captures **structured browser signals only** (no screenshots for MVP):
-  - page title, domain, URL
-  - visible text chunks (sanitized/filtered)
-  - form field labels + types (excluding sensitive/private inputs)
-  - cursor inactivity / hesitation signals
-  - tab switching patterns and “oscillation”
-  - repeated edits (editor-like pages)
-  - highlighted text (user selection)
-- Streams context snapshots every **3–5 seconds** (adaptive: slower when idle, faster during friction).
-- Runs an **intervention decision engine** that outputs:
-  - `intervene: boolean`
-  - `reason: string` (grounded in the snapshot)
-  - `response: string` (short + actionable)
-  - `ui_action?: { type, payload }`
-- Displays a minimal suggestion bubble in-page with **Accept / Dismiss** feedback.
-- Stores short-term session memory in Firestore; optionally builds long-term preferences via embeddings.
-
-Non-goals for MVP:
-- No raw keystroke streaming
-- No password / credit card / SSN collection
-- No hidden DOM fields
-- No always-on mic (voice is a stretch goal)
+This repo is currently **design‑first**: it documents how we’ll build AURA into reality, which credentials/permissions are needed, and how we’ll test every feature **before writing the full product code**.
 
 ---
 
-## High-Level Architecture
+## Product Modes
+
+### 1) Copilot mode (unsolicited, minimal interruptions)
+
+Runs mostly in the browser:
+- Observes **structured visible context** (no screenshots for MVP)
+- Detects friction (pauses, repeated edits, tab oscillation, unanswered required fields)
+- Intervenes only when helpful, with grounded explanations
+
+### 2) Action mode (explicit user command → computer control)
+
+Runs locally on the user’s machine (push‑to‑talk in v1):
+- Speech → text → plan → **structured tool calls**
+- Executes actions via deterministic controllers (OS APIs, Accessibility, DOM, Playwright)
+- **Verifies after every action**
+- Asks when ambiguous; confirms destructive actions; includes a kill switch
+
+Important safety stance: **Copilot mode can suggest; Action mode can do.** We don’t silently perform risky OS actions without explicit intent.
+
+---
+
+## High‑Level Architecture (Local‑First, Cloud‑Assisted)
+
+Key rule: **tool execution and safety enforcement happen locally**. Cloud services (LLMs/memory) are optional helpers—never direct “remote control”.
 
 ```mermaid
 flowchart LR
-  subgraph Chrome["Chrome Extension (Perception Layer)"]
-    CS["Content Script\n(DOM + signals)"]
-    BG["Service Worker\n(aggregator + sender)"]
-    UI["Suggestion Bubble UI"]
-    CS --> BG
-    BG --> UI
+  subgraph Browser["Chrome Extension (Perception + UI)"]
+    CS["Content Script\n(DOM signals → ContextSnapshot)"]
+    BGUI["Suggestion Bubble UI\nAccept / Dismiss"]
+    CS --> BGUI
   end
 
-  subgraph Backend["Cloud Run Backend (Orchestrator)"]
-    API["HTTP/WebSocket API"]
-    COMP["Context Compressor\n+ policy filters"]
-    DEC["Decision Engine\n(confidence*need*value)"]
-    MODEL["Gemini Live\n(stream reasoning)"]
-    MEM["Firestore\n(session memory)"]
-    EMB["Vertex Embeddings\n(behavior profile)"]
-    API --> COMP --> DEC
-    DEC <--> MODEL
-    DEC <--> MEM
-    DEC <--> EMB
+  subgraph Desktop["AURA Desktop Agent (Local)"]
+    PTT["Push‑to‑Talk\n+ Kill Switch"]
+    STT["STT Adapter\n(local or cloud)"]
+    PLAN["Planner (LLM)\nJSON tool-calling"]
+    SAFE["Safety Layer\nallowlist + confirm + policy"]
+    TOOLS["Controllers / Tools\nSystem + Browser + UI"]
+    VERIFY["Verification\n(observed state)"]
+    LOG["Audit Log\n(redacted)"]
+    PTT --> STT --> PLAN --> SAFE --> TOOLS --> VERIFY --> PLAN
+    SAFE --> LOG
+    TOOLS --> LOG
+    VERIFY --> LOG
   end
 
-  BG <--> API
+  subgraph Cloud["Optional Cloud Services"]
+    LLM["LLM API\n(Gemini / OpenAI / etc.)"]
+    MEM["Session Memory\n(Firestore or local)"]
+    EMB["Embeddings Profile\n(optional)"]
+  end
+
+  Browser <--> Desktop
+  Desktop <--> LLM
+  Desktop <--> MEM
+  Desktop <--> EMB
 ```
-
-Key design choice: the extension does **local filtering** before sending anything to the backend, and the backend re-applies policies (defense-in-depth).
 
 ---
 
-## Data Model
+## Deterministic Control Strategy (How We Avoid “Vision Clicking”)
 
-### `ContextSnapshot` (sent from extension → backend)
+We always prefer the most deterministic control surface:
+
+1. **Structured APIs (preferred)**
+   - File operations via OS APIs
+   - Browser via DOM (extension) or Playwright locators
+2. **Accessibility UI automation**
+   - Find controls by role/name, click menu items, set field values
+3. **Vision fallback (last resort)**
+   - Screenshot → locate target → click coordinates
+   - Used only when (1) and (2) fail, and guarded by extra safety rules
+
+---
+
+## Core Tooling (Action Mode)
+
+### Tool contract (verification-first)
+
+Every tool returns:
+
+```json
+{
+  "success": true,
+  "observed_state": "Finder is frontmost; created folder 'Invoices' in ~/Documents; verified exists.",
+  "error": null
+}
+```
+
+The planner must **not** assume success. It reads `observed_state` and decides the next step (retry, alternative, or ask a question).
+
+### Tool schema (MVP set)
+
+System (macOS):
+- `open_app(name)`
+- `open_path(path)`
+- `open_url(url)`
+- `search_files(query, root_paths?)`
+- `create_folder(path)`
+- `rename_path(from, to)`
+- `move_path(from, to)`
+- `trash_path(path)` (always requires confirmation)
+
+Browser:
+- **DOM-first (extension):**
+  - `browser_click_text(text)`
+  - `browser_type_active(text)`
+  - `browser_extract_visible_text()`
+  - `browser_get_active_url()`
+- **Playwright (optional deterministic flows):**
+  - `browser_new_tab()`, `browser_go(url)`, `browser_search(query)`, `browser_click_result(index)`
+
+UI (Accessibility):
+- `focus_app(name)`
+- `click_menu(menu_path[])`
+- `click_role(name, role)`
+- `type_text(text)`
+- `press_key(keys[])`
+
+Safety:
+- `confirm_action(reason)` (required for destructive/irreversible operations)
+- `abort(reason)` (kill switch / safe stop)
+
+---
+
+## Data Models
+
+### `ContextSnapshot` (from extension → desktop agent)
+
+Structured only; sanitized locally before leaving the page.
 
 ```ts
 type ContextSnapshot = {
@@ -76,29 +145,28 @@ type ContextSnapshot = {
   domain: string;
   page_type: "article" | "form" | "product" | "editor" | "search" | "other";
 
-  // Structured + sanitized; never raw screenshots
   page_title: string;
   visible_text_chunks: Array<{
-    id: string;                 // stable-ish across snapshots
-    text: string;               // truncated + sanitized
+    id: string;
+    text: string; // truncated + sanitized
     source: "h1" | "p" | "li" | "label" | "other";
   }>;
 
   active_element: null | {
     kind: "input" | "textarea" | "contenteditable" | "select";
-    label: string;              // best-effort from nearby label/aria
-    input_type?: string;        // "text" | "email" | "tel" | ...
-    value_length?: number;      // length only (not the raw value) for sensitive fields
+    label: string;
+    input_type?: string;
+    value_length?: number; // length only for sensitive fields
   };
 
   form_fields: Array<{
-    field_id: string;           // DOM-derived stable id (hashed)
+    field_id: string;
     label: string;
     kind: "input" | "textarea" | "select";
     input_type?: string;
     required?: boolean;
-    is_sensitive: boolean;      // determined locally + verified server-side
-    answered: boolean;          // value present (but value not sent if sensitive)
+    is_sensitive: boolean;
+    answered: boolean;
   }>;
 
   user_actions: Array<
@@ -108,310 +176,229 @@ type ContextSnapshot = {
     | { type: "selection"; chars: number }
   >;
 
-  hesitation_score: number;     // computed locally or server-side
-  tab_cluster_topic?: string;   // computed server-side from recent pages
-  timestamp: string;            // ISO-8601
+  hesitation_score: number;
+  tab_cluster_topic?: string;
+  timestamp: string; // ISO-8601
 };
 ```
 
-### Model I/O Contract (backend → Gemini Live)
+### Desktop observed state (for verification)
 
-Input: compressed snapshot JSON only (plus short session memory).
+```ts
+type DesktopState = {
+  os: "macos";
+  frontmost_app: string;
+  frontmost_window_title?: string;
+  active_url?: string; // if browser is detectable
+  recent_actions: Array<{ tool: string; ok: boolean; ts: string }>;
+};
+```
 
-Output (strict JSON):
+---
+
+## Planner Outputs (Two Schemas)
+
+### Copilot mode output (suggestion only)
 
 ```json
 {
-  "intervene": true,
-  "reason": "The user has paused for 18s on a required field labeled 'Describe your impact', and there are repeated edits.",
-  "response": "Try a 2–3 sentence impact answer: ...",
-  "ui_action": { "type": "show_bubble", "payload": { "anchor": "active_element" } }
+  "intervene": false,
+  "reason": "Not enough friction; user is scrolling normally.",
+  "response": "",
+  "ui_action": null
 }
 ```
 
-We will enforce strict schema validation; malformed output becomes `intervene:false` with a logged parse error.
+### Action mode output (tool calls)
 
----
-
-## Intervention Decision Engine (Implementation Plan)
-
-We keep a **deterministic scoring layer** around the model to reduce hallucinations and interruptions:
-
-1. **Intent inference**
-   - Model classifies current goal: `researching | applying | comparing | writing | purchasing`
-   - Must cite snapshot evidence (labels, headings, domain patterns).
-2. **Friction detection**
-   - `pause_ms` thresholds per page type
-   - `tab_oscillation` across same topic cluster
-   - `repeated_edits` in editors
-   - `unanswered_required_fields` in forms
-3. **Helpfulness scoring**
-   - `confidence`: does the model understand context? (self-rated + heuristics)
-   - `need`: friction score
-   - `value`: estimated time saved (heuristic by page type + friction)
-   - `intervention_score = confidence * need * value`
-4. **Gating rules (hard stops)**
-   - Sensitive domain blocklist (banking, healthcare, auth pages)
-   - Sensitive field types (password, cc, ssn) => never send raw values; usually no intervention
-   - Low confidence or missing grounding => silent
-5. **Response shaping**
-   - ≤ ~2 sentences by default
-   - Must include a short grounding clause (“because this field asks for…”)
-   - Offer an explicit action (rewrite, compare, summarize, clarify)
-
----
-
-## Proposed Repository Layout (Once We Start Coding)
-
-```text
-/extension/                  # Chrome extension (TypeScript)
-  /src/
-  manifest.json
-  vite.config.ts (or equivalent)
-
-/backend/                    # Cloud Run service (TypeScript/Node)
-  /src/
-  Dockerfile
-
-/infra/                      # IaC (optional): Terraform or gcloud scripts
-/docs/                       # threat model, privacy, demo scripts
+```json
+{
+  "goal": "Rename the PDF to include the date",
+  "questions": [],
+  "tool_calls": [
+    { "name": "search_files", "args": { "query": "Report.pdf", "root_paths": ["~/Documents"] } },
+    { "name": "rename_path", "args": { "from": "~/Documents/Report.pdf", "to": "~/Documents/Report-2026-02-26.pdf" } }
+  ]
+}
 ```
 
-Technology choices (recommended for MVP):
-- Extension: TypeScript + Vite, MV3 service worker, content scripts.
-- Backend: Node.js (TypeScript) on Cloud Run; WebSocket or Server-Sent Events for streaming.
-- Storage: Firestore (native mode).
-- Embeddings: Vertex AI embeddings for long-term profile (optional for demo).
-- Model: Gemini Live (streaming) via Google GenAI SDK on Vertex AI (recommended for server-side auth).
+We enforce strict JSON schema validation; malformed model output fails closed (no action).
+
+---
+
+## Safety & Privacy (Non‑Negotiables)
+
+- **No secrets in the Chrome extension.**
+- **Local filtering** in extension + **server/local re-checks** (defense-in-depth).
+- **Sensitive fields never sent** (passwords, credit cards, SSNs, hidden DOM fields).
+- **Domain allow/deny lists** (disable on auth/banking/health by default).
+- **Confirmation prompts** for destructive actions (delete/trash/move sensitive files).
+- **Ask when ambiguous** (multiple matches, unclear target app/window/file).
+- **Kill switch** hotkey stops execution immediately.
+- **Audit logs** are redacted and stored locally; cloud logging is opt-in.
 
 ---
 
 ## Credentials / API Keys / Secrets Needed
 
-This project is designed so **no secret API key is shipped inside the Chrome extension**.
+You’ll choose providers; keys depend on that choice. The recommended path avoids embedding secrets in the extension and keeps the “actuation plane” local.
 
-### Required (Google Cloud / Vertex AI path — recommended)
+### LLM (Planner / Reasoning)
 
-These are not “API keys” but are required credentials:
+Recommended (Vertex AI):
+- Google Cloud Project + Vertex AI enabled
+- Desktop agent uses ADC or service account credentials
+  - `GOOGLE_CLOUD_PROJECT`
+  - `GOOGLE_CLOUD_REGION`
+  - `AURA_GEMINI_MODEL`
 
-1. **Google Cloud Project**
-   - Enables: Cloud Run, Firestore, Vertex AI (Gemini + Embeddings)
-2. **Cloud Run service account**
-   - Permissions:
-     - Firestore read/write (sessions + events)
-     - Vertex AI invoke (Gemini) + embeddings
-3. **Application Default Credentials (local dev)**
-   - Use `gcloud auth application-default login` (preferred) OR
-   - `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json` (avoid if possible)
+Alternative (API key):
+- `GEMINI_API_KEY` (secret) **stored only by the desktop agent**, never in the extension
 
-Recommended backend env vars:
+Alternative (OpenAI):
+- `OPENAI_API_KEY` (secret) for planning/tool-calling models
 
-```bash
-GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
-GOOGLE_CLOUD_REGION="us-central1"
+### STT (Speech‑to‑Text)
 
-# Model configuration
-AURA_GEMINI_MODEL="(streaming-capable Gemini model id)"
-AURA_EMBEDDING_MODEL="(text embedding model id)"
+Pick one:
+- Local STT (e.g., whisper.cpp): **no keys**
+- OpenAI STT: `OPENAI_API_KEY`
+- Google Speech‑to‑Text: Google Cloud credentials (service account / ADC)
 
-# Firestore
-AURA_FIRESTORE_SESSIONS_COLLECTION="sessions"
-AURA_FIRESTORE_EVENTS_COLLECTION="events"
+### TTS (Text‑to‑Speech) (optional for demo)
 
-# Safety + ops
-AURA_SENSITIVE_DOMAIN_BLOCKLIST="accounts.google.com,bankofamerica.com,chase.com"
-AURA_MAX_VISIBLE_TEXT_CHARS="12000"
-AURA_SNAPSHOT_RATE_LIMIT_PER_MIN="20"
-AURA_LOG_LEVEL="info"
-```
+Pick one:
+- Local TTS: **no keys**
+- OpenAI TTS: `OPENAI_API_KEY`
+- Google Cloud Text‑to‑Speech: Google Cloud credentials (service account / ADC)
 
-### Optional (Gemini Developer API path — only if NOT using Vertex AI)
+### Memory (optional)
 
-If you choose to call Gemini via the Developer API (not recommended for Cloud Run production), you will need:
+Local-first (recommended for early demo):
+- SQLite/JSON: **no keys**
 
-- `GEMINI_API_KEY` (secret)
+Cloud memory (optional):
+- Firestore (service account / ADC)
+  - `AURA_FIRESTORE_SESSIONS_COLLECTION`
+  - `AURA_FIRESTORE_EVENTS_COLLECTION`
 
-Important: do **not** place `GEMINI_API_KEY` in the extension; the backend should own it.
+### Ops (optional)
 
-### Optional (Client identity / user accounts)
-
-For a demo, we can operate with anonymous sessions (`session_id`) and no user login.
-
-For production-grade identity, one option is Firebase Authentication. This introduces:
-
-- `FIREBASE_WEB_API_KEY` (not a secret, but required by client config)
-- Firebase project configuration (auth domain, app id, etc.)
-
-Alternative: Chrome Identity API + OAuth; still keep server-side session tokens.
-
-### Optional (Ops/telemetry)
-
-- `SENTRY_DSN` (client/server error reporting)
-- `REDIS_URL` (rate limiting / queues; if we add it)
+- `SENTRY_DSN`
 
 ---
 
-## Local Development Plan (No Code Yet)
+## Local Permissions (macOS Demo Requirements)
 
-Once code exists, local dev will look like:
+To operate the computer on macOS, the desktop agent will request:
 
-1. Run backend locally (Docker or `node`):
-   - serves `/snapshot` ingest endpoint
-   - serves `/stream/:session_id` suggestions stream (WS/SSE)
-2. Load extension unpacked in Chrome:
-   - set backend URL in extension options
-3. Visit demo pages:
-   - form page (required fields + long pauses)
-   - article (highlight + multi-tab summary)
-   - editor (repeated edits)
-   - product comparison (two product tabs)
+- **Microphone** (push‑to‑talk)
+- **Accessibility** (UI automation)
+- **Automation / Apple Events** (if controlling specific apps via Apple Events)
+- **Screen Recording** (only if enabling vision fallback)
+- **Files & Folders / Full Disk Access** (only if file search spans protected locations)
+
+We fail closed if required permissions are missing.
 
 ---
 
-## Testing Strategy (How We Ensure Each Feature Works)
+## Testing Strategy (How We Prove Each Feature Works)
 
-We will test at **three levels**: unit, integration, and end-to-end (E2E). The guiding rule: *mock the model for determinism*, then run a small number of live-model smoke tests.
+Guiding rule: **mock the model for determinism**, then run a small number of live-model smoke tests.
 
-### 1) Extension: Context capture + privacy filtering
+### 1) Extension: context capture + privacy filtering
 
-Features to test:
-- Visible text extraction is limited, sanitized, and stable across snapshots.
-- Form parsing captures labels/types/required-ness.
-- Sensitive inputs are detected and excluded (password, credit card, SSN-like patterns).
-- “Active element” identification works for input/textarea/contenteditable.
+Test:
+- Visible text extraction is sanitized + size-limited
+- Form parsing captures labels/types/required fields
+- Sensitive inputs are detected and excluded
 
-How we test:
-- **Unit (Jest + JSDOM)**: feed synthetic DOM trees and assert the produced `ContextSnapshot`.
-- **Property tests (optional)**: fuzz DOM structures; ensure no hidden fields or disallowed inputs leak.
-- **E2E (Playwright/Puppeteer + extension runner)**:
-  - load a local HTML fixture page with a form
-  - type into fields and assert:
-    - snapshots do not include sensitive values
-    - `answered` flips true
-    - `active_element.label` matches expected
+How:
+- Unit: JSDOM fixtures
+- E2E: Playwright/Puppeteer + extension runner against local HTML fixtures
 
-Acceptance criteria:
-- Zero sensitive values in emitted payloads
-- Snapshot schema always validates locally
+### 2) Desktop agent: planner + schema enforcement
 
-### 2) Extension: Friction signals
+Test:
+- Tool-call JSON validates
+- Disallowed tools/args are blocked
+- Ambiguity triggers questions, not actions
 
-Features to test:
-- Hesitation detection (`cursor_idle`, pause thresholds by page type).
-- Repeated edits detection in editor pages.
-- Tab switching events and “oscillation” recognition.
+How:
+- Unit: golden tests (“instruction → tool_calls” with a mocked LLM)
+- Contract: invalid JSON → no action
 
-How we test:
-- **Unit**: deterministic timers + synthetic events.
-- **E2E**: scripted browsing flows that switch tabs and edit text; assert event counts and timestamps.
+### 3) System controller (files/apps/urls)
 
-Acceptance criteria:
-- `hesitation_score` increases when expected, stays low during normal reading
+Test:
+- Open app/path/url works and is verified
+- File operations are correct and reversible where possible
+- Trash/delete always requires confirmation
 
-### 3) Backend: Ingest + validation + policy enforcement
+How:
+- Integration: run against temp directories; assert filesystem state after each tool
 
-Features to test:
-- Snapshot schema validation and rejection of malformed payloads.
-- Server-side policy re-checks (domain blocklist, sensitive fields).
-- Context compression never exceeds configured limits.
+### 4) Browser controller (DOM-first + Playwright optional)
 
-How we test:
-- **Unit**: schema validator tests + redaction tests.
-- **Integration**: run backend locally; POST snapshots; assert stored/processed output.
-- **Security regression tests**: snapshot containing “password” fields must be rejected/redacted.
+Test:
+- Navigation, search, click, extract text is stable
+- Verification reads active URL and page-ready signals
 
-Acceptance criteria:
-- Invalid snapshots get 4xx with clear errors
-- Policy violations become `intervene:false` (or rejected), never forwarded to the model
+How:
+- Integration/E2E: Playwright tests with known sites/fixtures (plus local HTML pages)
 
-### 4) Backend: Decision engine (confidence * need * value)
+### 5) Accessibility controller (UI automation)
 
-Features to test:
-- Friction scoring correctness across page types.
-- Gating rules always override model suggestions.
-- Intervention threshold behaves predictably.
+Test:
+- Focus app/window, click menu items, type text, press keys
+- Post-condition verification (frontmost app, UI element existence where possible)
 
-How we test:
-- **Unit**: feed canned snapshots and assert computed scores and the final decision.
-- **Golden tests**: keep a small suite of “known scenarios” (form pause, editor rewrite, comparison) and ensure outputs don’t regress.
+How:
+- Local E2E harness (manual + scripted) using a small “test app”/fixture window
+- CI uses mocked accessibility tree where feasible (real UI automation is hard in headless CI)
 
-Acceptance criteria:
-- No interventions when `confidence` is low or policy blocks
-- Interventions fire on the four demo flows reliably
+### 6) Voice loop (push‑to‑talk → STT → plan → execute)
 
-### 5) Model adapter: Gemini Live JSON contract
+Test:
+- Push‑to‑talk toggles reliably
+- STT produces expected transcript on prerecorded audio
+- Full loop succeeds on demo commands and stops safely on kill switch
 
-Features to test:
-- Output is strict JSON and conforms to the response schema.
-- Streaming is handled correctly (partial chunks, retries).
-- Malformed model output fails closed (`intervene:false`).
-
-How we test:
-- **Unit**: mock streaming chunks; ensure parser reconstructs valid JSON.
-- **Contract tests**: run against a stub “model server” that returns edge cases (truncated JSON, extra fields).
-- **Smoke test (live model)**: a minimal snapshot triggers a known intervention; verify schema compliance.
-
-Acceptance criteria:
-- 100% schema validation pass in mock tests
-- Live smoke tests gated behind a flag and never run in CI by default
-
-### 6) UI bubble: Render + accept/dismiss feedback loop
-
-Features to test:
-- Bubble anchors near active element (or a fallback location).
-- Accept inserts text only into allowed fields (never into sensitive inputs).
-- Dismiss suppresses repeats for a cooldown window.
-- Feedback event is sent to backend.
-
-How we test:
-- **Unit**: UI state reducer tests.
-- **E2E**: run a page with a form/editor; simulate receiving a suggestion; click Accept/Dismiss; assert DOM changes and emitted feedback event.
-
-Acceptance criteria:
-- Accept produces correct insertion behavior
-- Dismiss prevents immediate re-prompt spam
-
-### 7) Firestore session memory + embeddings profile (optional for MVP)
-
-Features to test:
-- Session memory stores last N snapshots + outcomes.
-- Embeddings profile updates only with non-sensitive features.
-- Retrieval improves consistency (e.g., writing tone preferences).
-
-How we test:
-- **Integration**: Firestore emulator for CI; assert writes/reads and TTL behavior.
-- **Unit**: embedding input builder ensures no PII/sensitive tokens are included.
-
-Acceptance criteria:
-- Deterministic session reconstruction
-- No sensitive fields are embedded
+How:
+- E2E: prerecorded audio fixtures + mocked STT for CI + a live STT smoke test flag
 
 ---
 
-## Demo Readiness Checklist (4 Required Flows)
+## 4‑Week Build Timeline (Reliable Demo in 1 Month)
 
-1. **Form completion assist**
-   - Required field left blank + pause → AURA suggests an answer format grounded in field label.
-2. **Research consolidation**
-   - Multiple tabs on same topic → AURA offers a consensus summary with sources (domains/titles).
-3. **Writing rewrite**
-   - Repeated edits → AURA suggests a rewrite with tone/clarity rationale.
-4. **Product comparison**
-   - Two product pages + oscillation → AURA presents a short comparison + recommendation criteria.
+### Week 1 — Core loop
+- Push‑to‑talk + kill switch
+- STT adapter
+- Planner + tool schema + JSON validation
+- `open_app`, `open_path`, `open_url`, logging
 
-Success metrics targets (demo):
-- Intervention acceptance rate > 50%
-- Average interruption length < ~10 words (excluding optional “Details”)
-- Zero hallucination: responses must reference snapshot evidence or stay silent
+### Week 2 — Browser control (critical unlock)
+- Extension ↔ desktop agent bridge (localhost)
+- DOM-first browser tools + verification
+- Optional Playwright for deterministic scripted flows
+
+### Week 3 — OS interaction (macOS)
+- File tools (create/rename/move) + confirm gates
+- Accessibility controller basics (focus/menu/type)
+
+### Week 4 — Reliability + safety
+- Ambiguity questions + confirmations
+- Retries/timeouts + safe abort
+- Action history UI (“what I did”)
+- Golden scenario suite + live-model smoke tests
 
 ---
 
 ## Next Step (When You’re Ready)
 
-If you confirm, we’ll create the initial monorepo skeleton (`/extension`, `/backend`, `/docs`) and implement:
-1) DOM snapshot capture + local privacy filter  
-2) Backend ingest + schema validation  
-3) Mock model adapter + decision engine  
-4) UI bubble + feedback  
-5) Live Gemini integration + Firestore session memory  
+Confirm 3 decisions and we can proceed to scaffolding (still minimal/no product code until you say so):
+
+1. **LLM provider:** Vertex AI (service account) vs API-key provider  
+2. **STT/TTS path:** local (no keys) vs cloud (keys/credentials)  
+3. **Browser control preference:** DOM-first (extension) only, or extension + Playwright
 
