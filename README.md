@@ -43,7 +43,7 @@ flowchart LR
 
   subgraph Desktop["AURA Desktop Agent (Local)"]
     PTT["Push‑to‑Talk\n+ Kill Switch"]
-    STT["STT Adapter\n(local or cloud)"]
+    STT["Local STT\n(no keys)"]
     PLAN["Planner (LLM)\nJSON tool-calling"]
     SAFE["Safety Layer\nallowlist + confirm + policy"]
     TOOLS["Controllers / Tools\nSystem + Browser + UI"]
@@ -65,8 +65,8 @@ flowchart LR
     CR --> SM
   end
 
-  subgraph External["External APIs (optional)"]
-    EL["ElevenLabs\nTTS (and/or STT)"]
+  subgraph External["External APIs"]
+    EL["ElevenLabs\nTTS"]
   end
 
   Browser <--> Desktop
@@ -79,7 +79,7 @@ flowchart LR
 ## Chosen Stack (For This Build)
 
 - **Backend (required):** Google Cloud Run + **Vertex AI (Gemini)** endpoints (meets the “proof of GCP deployment” requirement)
-- **Speech:** **ElevenLabs** for TTS (and optionally STT if you want to use their speech recognition); otherwise we can plug in Whisper/Google STT behind the same interface
+- **Speech:** **Local STT via `whisper.cpp`** (no keys) + **ElevenLabs** for TTS **via Cloud Run** (so `ELEVENLABS_API_KEY` never lives on the user’s device)
 - **Browser control:** Chrome extension **plus Playwright** (extension for “in the user’s current tab”; Playwright for deterministic scripted flows)
 
 ## Deterministic Control Strategy (How We Avoid “Vision Clicking”)
@@ -299,9 +299,21 @@ AURA_BACKEND_URL="https://<cloud-run-service-url>"
 AURA_BACKEND_AUTH_TOKEN="(shared token or auth config for backend)"
 ```
 
-### ElevenLabs (speech)
+### Local STT (no keys)
 
-Secrets (store in Secret Manager if Cloud Run performs TTS/STT; otherwise store locally for dev only):
+Local STT keeps raw audio on-device and avoids cloud STT keys.
+
+Chosen implementation: **`whisper.cpp`**
+- Pros: consistent offline transcription, good accuracy for push‑to‑talk commands
+- Tradeoffs: model download/size and local CPU usage
+
+Operational notes (design intent):
+- Ship a small default model (or download on first run) and allow users to switch models for accuracy vs speed.
+- Store model weights locally and never upload raw audio as part of STT.
+
+### ElevenLabs (TTS)
+
+Secrets (store in Secret Manager if Cloud Run performs TTS; otherwise store locally for dev only):
 - `ELEVENLABS_API_KEY`
 
 Common configuration:
@@ -310,7 +322,7 @@ Common configuration:
 
 Notes:
 - If we route TTS through Cloud Run, the **ElevenLabs key never lives on the user’s device**.
-- If you want **STT via ElevenLabs**, we’ll add an STT adapter behind the same interface; otherwise we can keep STT local while still using ElevenLabs for TTS.
+  - This build will route TTS via **Cloud Run**: Desktop agent → `POST /tts` → Cloud Run → ElevenLabs → audio bytes → Desktop agent.
 
 ### Proof of Google Cloud Deployment (Requirement)
 
@@ -331,8 +343,7 @@ Proposed endpoints (shape can change, but keep them explicit and testable):
 - `GET /healthz` → uptime checks
 - `POST /copilot` → input: `ContextSnapshot`; output: copilot JSON (`intervene/reason/response/ui_action`)
 - `POST /plan` → input: instruction + `DesktopState` (+ optional `ContextSnapshot`); output: tool-call plan JSON
-- `POST /tts` (optional) → input: text; output: audio bytes via ElevenLabs
-- `POST /stt` (optional) → input: audio; output: transcript (ElevenLabs or alternate provider)
+- `POST /tts` → input: text; output: audio bytes via ElevenLabs (key in Secret Manager)
 
 Hard requirements enforced on backend:
 - strict request/response schema validation
@@ -428,7 +439,7 @@ Test:
 - Push‑to‑talk toggles reliably
 - STT produces expected transcript on prerecorded audio
 - Full loop succeeds on demo commands and stops safely on kill switch
-- TTS produces playable audio for responses (via ElevenLabs in cloud or a local stub in CI)
+- TTS produces playable audio for responses (via ElevenLabs through Cloud Run; stubbed in CI)
 
 How:
 - E2E: prerecorded audio fixtures + mocked STT for CI + a live STT smoke test flag
@@ -442,7 +453,8 @@ How:
 - Desktop agent skeleton (tools + verification + local audit log)
 - Cloud Run backend skeleton (`/healthz`, `/plan`)
 - Vertex AI (Gemini) planning call + strict JSON schema validation
-- ElevenLabs TTS path (backend `/tts` or agent-direct), plus local dev stubs
+- `whisper.cpp` local STT integration (offline, no keys)
+- ElevenLabs TTS path via backend `/tts` + Secret Manager, plus local dev stubs
 - `open_app`, `open_path`, `open_url` + verification
 
 ### Week 2 — Browser control (critical unlock)
@@ -466,7 +478,7 @@ How:
 
 Decisions locked for this build:
 - Vertex AI (Gemini) via **Cloud Run** on Google Cloud
-- **ElevenLabs** for speech (TTS; STT adapter as desired)
+- **Local STT via `whisper.cpp`** (no keys) + **ElevenLabs** for TTS via **Cloud Run**
 - Chrome extension **+ Playwright**
 
 If you give the go‑ahead to start coding, we’ll scaffold:
