@@ -29,7 +29,9 @@ Important safety stance: **Copilot mode can suggest; Action mode can do.** We do
 
 ## High‑Level Architecture (Local‑First, Cloud‑Assisted)
 
-Key rule: **tool execution and safety enforcement happen locally**. Cloud services (LLMs/memory) are optional helpers—never direct “remote control”.
+Key rule: **tool execution and safety enforcement happen locally**. Cloud services can assist with planning/memory, but never directly “remote control” the machine.
+
+Project requirement note: this build will include a **Google Cloud backend (Cloud Run)** that calls **Vertex AI (Gemini)** so we can provide proof the backend is running on GCP.
 
 ```mermaid
 flowchart LR
@@ -53,19 +55,32 @@ flowchart LR
     VERIFY --> LOG
   end
 
-  subgraph Cloud["Optional Cloud Services"]
-    LLM["LLM API\n(Gemini / OpenAI / etc.)"]
-    MEM["Session Memory\n(Firestore or local)"]
-    EMB["Embeddings Profile\n(optional)"]
+  subgraph GCP["Google Cloud Backend (Cloud Run)"]
+    CR["Cloud Run Orchestrator API\n(plan + copilot + memory)"]
+    VAI["Vertex AI (Gemini)\nplanner/suggestions"]
+    FS["Firestore (optional)\nsession memory"]
+    SM["Secret Manager\n(backend secrets)"]
+    CR --> VAI
+    CR --> FS
+    CR --> SM
+  end
+
+  subgraph External["External APIs (optional)"]
+    EL["ElevenLabs\nTTS (and/or STT)"]
   end
 
   Browser <--> Desktop
-  Desktop <--> LLM
-  Desktop <--> MEM
-  Desktop <--> EMB
+  Desktop <--> CR
+  CR <--> EL
 ```
 
 ---
+
+## Chosen Stack (For This Build)
+
+- **Backend (required):** Google Cloud Run + **Vertex AI (Gemini)** endpoints (meets the “proof of GCP deployment” requirement)
+- **Speech:** **ElevenLabs** for TTS (and optionally STT if you want to use their speech recognition); otherwise we can plug in Whisper/Google STT behind the same interface
+- **Browser control:** Chrome extension **plus Playwright** (extension for “in the user’s current tab”; Playwright for deterministic scripted flows)
 
 ## Deterministic Control Strategy (How We Avoid “Vision Clicking”)
 
@@ -241,50 +256,89 @@ We enforce strict JSON schema validation; malformed model output fails closed (n
 
 ## Credentials / API Keys / Secrets Needed
 
-You’ll choose providers; keys depend on that choice. The recommended path avoids embedding secrets in the extension and keeps the “actuation plane” local.
+This build uses **Cloud Run + Vertex AI** and **ElevenLabs**. We keep secrets out of the Chrome extension.
 
-### LLM (Planner / Reasoning)
+Recommended secret storage:
+- **Cloud Run:** Google Secret Manager
+- **Desktop agent:** OS keychain (or local `.env` for dev only)
 
-Recommended (Vertex AI):
-- Google Cloud Project + Vertex AI enabled
-- Desktop agent uses ADC or service account credentials
-  - `GOOGLE_CLOUD_PROJECT`
-  - `GOOGLE_CLOUD_REGION`
-  - `AURA_GEMINI_MODEL`
+### Google Cloud (required)
 
-Alternative (API key):
-- `GEMINI_API_KEY` (secret) **stored only by the desktop agent**, never in the extension
+GCP resources:
+- **Cloud Run** service (the orchestrator backend)
+- **Vertex AI** enabled (Gemini model access)
+- (Optional) **Firestore** for session memory
+- **Secret Manager** for storing backend secrets
 
-Alternative (OpenAI):
-- `OPENAI_API_KEY` (secret) for planning/tool-calling models
+Cloud Run service account permissions (minimum starting point):
+- Vertex AI invoke (Gemini)
+- Secret Manager access for required secrets
+- (Optional) Firestore read/write
 
-### STT (Speech‑to‑Text)
+Backend env vars (Cloud Run):
 
-Pick one:
-- Local STT (e.g., whisper.cpp): **no keys**
-- OpenAI STT: `OPENAI_API_KEY`
-- Google Speech‑to‑Text: Google Cloud credentials (service account / ADC)
+```bash
+GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
+GOOGLE_CLOUD_REGION="us-central1"
 
-### TTS (Text‑to‑Speech) (optional for demo)
+AURA_GEMINI_MODEL="(Gemini model id on Vertex AI)"
 
-Pick one:
-- Local TTS: **no keys**
-- OpenAI TTS: `OPENAI_API_KEY`
-- Google Cloud Text‑to‑Speech: Google Cloud credentials (service account / ADC)
+# Optional memory
+AURA_FIRESTORE_SESSIONS_COLLECTION="sessions"
+AURA_FIRESTORE_EVENTS_COLLECTION="events"
 
-### Memory (optional)
+# Safety + ops
+AURA_SENSITIVE_DOMAIN_BLOCKLIST="accounts.google.com,bankofamerica.com,chase.com"
+AURA_LOG_LEVEL="info"
+```
 
-Local-first (recommended for early demo):
-- SQLite/JSON: **no keys**
+Desktop agent env vars (local):
 
-Cloud memory (optional):
-- Firestore (service account / ADC)
-  - `AURA_FIRESTORE_SESSIONS_COLLECTION`
-  - `AURA_FIRESTORE_EVENTS_COLLECTION`
+```bash
+AURA_BACKEND_URL="https://<cloud-run-service-url>"
+AURA_BACKEND_AUTH_TOKEN="(shared token or auth config for backend)"
+```
 
-### Ops (optional)
+### ElevenLabs (speech)
 
-- `SENTRY_DSN`
+Secrets (store in Secret Manager if Cloud Run performs TTS/STT; otherwise store locally for dev only):
+- `ELEVENLABS_API_KEY`
+
+Common configuration:
+- `ELEVENLABS_VOICE_ID`
+- `ELEVENLABS_MODEL_ID` (optional)
+
+Notes:
+- If we route TTS through Cloud Run, the **ElevenLabs key never lives on the user’s device**.
+- If you want **STT via ElevenLabs**, we’ll add an STT adapter behind the same interface; otherwise we can keep STT local while still using ElevenLabs for TTS.
+
+### Proof of Google Cloud Deployment (Requirement)
+
+We’ll satisfy this in two ways:
+
+1. **Screen recording proof (recommended):**
+   - Show the Cloud Run service in the GCP Console and a live request hitting it (logs/metrics), and optionally a request ID that correlates with the desktop agent action.
+2. **Repo proof (once code is added):**
+   - Include a backend module that calls **Vertex AI Gemini endpoints** from Cloud Run (e.g., `backend/src/vertex.ts`), demonstrating direct use of Google Cloud services/APIs.
+
+---
+
+## GCP Backend Responsibilities (Cloud Run Orchestrator)
+
+The Cloud Run backend is the “thinking/memory” service, not the actuator.
+
+Proposed endpoints (shape can change, but keep them explicit and testable):
+- `GET /healthz` → uptime checks
+- `POST /copilot` → input: `ContextSnapshot`; output: copilot JSON (`intervene/reason/response/ui_action`)
+- `POST /plan` → input: instruction + `DesktopState` (+ optional `ContextSnapshot`); output: tool-call plan JSON
+- `POST /tts` (optional) → input: text; output: audio bytes via ElevenLabs
+- `POST /stt` (optional) → input: audio; output: transcript (ElevenLabs or alternate provider)
+
+Hard requirements enforced on backend:
+- strict request/response schema validation
+- content limits + redaction of sensitive fields
+- rate limits per session/device
+- logs contain no secrets and no sensitive form values
 
 ---
 
@@ -338,7 +392,7 @@ Test:
 How:
 - Integration: run against temp directories; assert filesystem state after each tool
 
-### 4) Browser controller (DOM-first + Playwright optional)
+### 4) Browser controller (extension + Playwright)
 
 Test:
 - Navigation, search, click, extract text is stable
@@ -347,7 +401,18 @@ Test:
 How:
 - Integration/E2E: Playwright tests with known sites/fixtures (plus local HTML pages)
 
-### 5) Accessibility controller (UI automation)
+### 5) Cloud Run backend (Vertex AI orchestration)
+
+Test:
+- Request/response schemas are enforced (invalid input → 4xx; invalid model output → fails closed)
+- Redaction + safety policies are applied server-side (no sensitive fields stored or logged)
+- Vertex AI calls work in a controlled way (timeouts, retries, rate limits)
+
+How:
+- Unit: schema validation + policy tests with a mocked Vertex client
+- Integration: container-local backend tests (no network) + an optional “deployed smoke test” flag that hits the live Cloud Run URL
+
+### 6) Accessibility controller (UI automation)
 
 Test:
 - Focus app/window, click menu items, type text, press keys
@@ -357,12 +422,13 @@ How:
 - Local E2E harness (manual + scripted) using a small “test app”/fixture window
 - CI uses mocked accessibility tree where feasible (real UI automation is hard in headless CI)
 
-### 6) Voice loop (push‑to‑talk → STT → plan → execute)
+### 7) Voice loop (push‑to‑talk → STT → plan → execute → TTS)
 
 Test:
 - Push‑to‑talk toggles reliably
 - STT produces expected transcript on prerecorded audio
 - Full loop succeeds on demo commands and stops safely on kill switch
+- TTS produces playable audio for responses (via ElevenLabs in cloud or a local stub in CI)
 
 How:
 - E2E: prerecorded audio fixtures + mocked STT for CI + a live STT smoke test flag
@@ -373,14 +439,16 @@ How:
 
 ### Week 1 — Core loop
 - Push‑to‑talk + kill switch
-- STT adapter
-- Planner + tool schema + JSON validation
-- `open_app`, `open_path`, `open_url`, logging
+- Desktop agent skeleton (tools + verification + local audit log)
+- Cloud Run backend skeleton (`/healthz`, `/plan`)
+- Vertex AI (Gemini) planning call + strict JSON schema validation
+- ElevenLabs TTS path (backend `/tts` or agent-direct), plus local dev stubs
+- `open_app`, `open_path`, `open_url` + verification
 
 ### Week 2 — Browser control (critical unlock)
 - Extension ↔ desktop agent bridge (localhost)
 - DOM-first browser tools + verification
-- Optional Playwright for deterministic scripted flows
+- Playwright runner for deterministic scripted flows (search/click/extract)
 
 ### Week 3 — OS interaction (macOS)
 - File tools (create/rename/move) + confirm gates
@@ -396,9 +464,13 @@ How:
 
 ## Next Step (When You’re Ready)
 
-Confirm 3 decisions and we can proceed to scaffolding (still minimal/no product code until you say so):
+Decisions locked for this build:
+- Vertex AI (Gemini) via **Cloud Run** on Google Cloud
+- **ElevenLabs** for speech (TTS; STT adapter as desired)
+- Chrome extension **+ Playwright**
 
-1. **LLM provider:** Vertex AI (service account) vs API-key provider  
-2. **STT/TTS path:** local (no keys) vs cloud (keys/credentials)  
-3. **Browser control preference:** DOM-first (extension) only, or extension + Playwright
-
+If you give the go‑ahead to start coding, we’ll scaffold:
+1) `/backend` Cloud Run service (Vertex AI + schema validation + `/healthz`)  
+2) `/desktop` agent loop (tool schema, safety gates, verification, local logs)  
+3) `/extension` snapshot capture + suggestion UI + localhost bridge  
+4) A deterministic test harness (mock model + golden scenarios + Playwright E2E)  
