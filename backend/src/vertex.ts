@@ -53,6 +53,9 @@ export function createVertexPlanner(env: Env): VertexPlanner {
   if (!env.GOOGLE_CLOUD_PROJECT || !env.AURA_GEMINI_MODEL) {
     throw new Error("Vertex planner requires GOOGLE_CLOUD_PROJECT and AURA_GEMINI_MODEL");
   }
+  const project = env.GOOGLE_CLOUD_PROJECT;
+  const model = env.AURA_GEMINI_MODEL;
+
   return {
     async plan({ instruction, context, state }) {
       const system = [
@@ -71,9 +74,9 @@ export function createVertexPlanner(env: Env): VertexPlanner {
 
       const token = await getAccessToken();
       const url = vertexGenerateContentUrl({
-        project: env.GOOGLE_CLOUD_PROJECT,
+        project,
         location: env.GOOGLE_CLOUD_LOCATION,
-        model: env.AURA_GEMINI_MODEL
+        model
       });
 
       const res = await fetch(url, {
