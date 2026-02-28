@@ -1,23 +1,102 @@
-import type { Server } from "node:http";
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import type { Env } from "../src/env.js";
 import type { VertexPlanner } from "../src/vertex.js";
 
-async function listenOnLocalhost(app: any): Promise<Server> {
-  const server: Server = app.listen(0, "127.0.0.1");
-  await new Promise<void>((resolve, reject) => {
-    server.once("listening", resolve);
-    server.once("error", reject);
-  });
-  return server;
-}
+type RouteMethod = "get" | "post";
 
-async function closeServer(server: Server): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    server.close((err) => (err ? reject(err) : resolve()));
-  });
+type InvokeResult = {
+  status: number;
+  body: unknown;
+  headers: Record<string, string>;
+};
+
+async function invokeRoute(args: {
+  app: any;
+  method: RouteMethod;
+  path: string;
+  body?: unknown;
+  headers?: Record<string, string>;
+}): Promise<InvokeResult> {
+  const layer = args.app._router?.stack?.find(
+    (entry: any) => entry?.route?.path === args.path && entry?.route?.methods?.[args.method]
+  );
+  if (!layer) throw new Error(`Route ${args.method.toUpperCase()} ${args.path} not found`);
+
+  const handlers: Array<(req: any, res: any, next: (err?: unknown) => void) => unknown> =
+    layer.route.stack.map((entry: any) => entry.handle);
+
+  const requestHeaders = Object.fromEntries(
+    Object.entries(args.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
+  );
+
+  const req: any = {
+    method: args.method.toUpperCase(),
+    path: args.path,
+    body: args.body ?? {},
+    headers: requestHeaders,
+    header(name: string): string | undefined {
+      return this.headers[name.toLowerCase()];
+    },
+    get(name: string): string | undefined {
+      return this.headers[name.toLowerCase()];
+    }
+  };
+
+  const out: InvokeResult = { status: 200, body: null, headers: {} };
+  let sent = false;
+
+  const res: any = {
+    status(code: number) {
+      out.status = code;
+      return this;
+    },
+    json(payload: unknown) {
+      out.body = payload;
+      sent = true;
+      return this;
+    },
+    send(payload: unknown) {
+      out.body = payload;
+      sent = true;
+      return this;
+    },
+    setHeader(name: string, value: string) {
+      out.headers[name.toLowerCase()] = value;
+    }
+  };
+
+  for (const handler of handlers) {
+    let nextCalled = false;
+    let settled = false;
+    await new Promise<void>((resolve, reject) => {
+      const next = (err?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err);
+        else {
+          nextCalled = true;
+          resolve();
+        }
+      };
+      Promise.resolve(handler(req, res, next))
+        .then(() => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        })
+        .catch((err) => {
+          if (!settled) {
+            settled = true;
+            reject(err);
+          }
+        });
+    });
+    if (sent || !nextCalled) break;
+  }
+
+  return out;
 }
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
@@ -41,14 +120,9 @@ const stubPlanner: VertexPlanner = {
 describe("backend app", () => {
   it("healthz returns ok", async () => {
     const app = createApp({ env: makeEnv(), planner: stubPlanner });
-    const server = await listenOnLocalhost(app);
-    try {
-      const res = await request(server).get("/healthz");
-      expect(res.status).toBe(200);
-      expect(res.body.ok).toBe(true);
-    } finally {
-      await closeServer(server);
-    }
+    const res = await invokeRoute({ app, method: "get", path: "/healthz" });
+    expect(res.status).toBe(200);
+    expect((res.body as any).ok).toBe(true);
   });
 
   it("plan requires auth when token configured", async () => {
@@ -56,13 +130,13 @@ describe("backend app", () => {
       env: makeEnv({ AURA_BACKEND_AUTH_TOKEN: "x".repeat(32) }),
       planner: stubPlanner
     });
-    const server = await listenOnLocalhost(app);
-    try {
-      const res = await request(server).post("/plan").send({ instruction: "hi" });
-      expect(res.status).toBe(401);
-    } finally {
-      await closeServer(server);
-    }
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/plan",
+      body: { instruction: "hi" }
+    });
+    expect(res.status).toBe(401);
   });
 
   it("plan returns plan when authed", async () => {
@@ -71,16 +145,35 @@ describe("backend app", () => {
       env: makeEnv({ AURA_BACKEND_AUTH_TOKEN: token }),
       planner: stubPlanner
     });
-    const server = await listenOnLocalhost(app);
-    try {
-      const res = await request(server)
-        .post("/plan")
-        .set("authorization", `Bearer ${token}`)
-        .send({ instruction: "hi" });
-      expect(res.status).toBe(200);
-      expect(res.body.goal).toBe("test");
-    } finally {
-      await closeServer(server);
-    }
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/plan",
+      headers: { authorization: `Bearer ${token}` },
+      body: { instruction: "hi" }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).goal).toBe("test");
+  });
+
+  it("plan fails closed on malformed planner output", async () => {
+    const app = createApp({
+      env: makeEnv(),
+      planner: {
+        async plan() {
+          return { unexpected: true };
+        }
+      }
+    });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/plan",
+      body: { instruction: "hi" }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).tool_calls).toEqual([]);
+    expect(Array.isArray((res.body as any).questions)).toBe(true);
+    expect((res.body as any).questions[0]).toContain("No actions were executed");
   });
 });

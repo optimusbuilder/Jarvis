@@ -1,0 +1,49 @@
+[
+  {
+    "session_id": "sess-1",
+    "url": "https://example.com/form",
+    "domain": "example.com",
+    "page_type": "form",
+    "page_title": "Application",
+    "visible_text_chunks": [
+      {
+        "id": "h1:0",
+        "text": "Apply now",
+        "source": "h1"
+      }
+    ],
+    "active_element": {
+      "kind": "input",
+      "label": "First name",
+      "input_type": "text",
+      "value_length": 3
+    },
+    "form_fields": [
+      {
+        "field_id": "first_name",
+        "label": "First name",
+        "kind": "input",
+        "input_type": "text",
+        "required": true,
+        "is_sensitive": false,
+        "answered": true
+      }
+    ],
+    "user_actions": [],
+    "hesitation_score": 0.1,
+    "tab_cluster_topic": "job application",
+    "timestamp": "2026-02-28T19:00:00.000Z"
+  },
+  {
+    "session_id": "sess-2",
+    "url": "https://example.com/article",
+    "domain": "example.com",
+    "page_type": "article",
+    "visible_text_chunks": [],
+    "active_element": null,
+    "form_fields": [],
+    "user_actions": [],
+    "hesitation_score": 0,
+    "timestamp": "2026-02-28T19:01:00.000Z"
+  }
+]

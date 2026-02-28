@@ -1,0 +1,33 @@
+[
+  {},
+  {
+    "goal": 404,
+    "questions": [],
+    "tool_calls": []
+  },
+  {
+    "goal": "Open app",
+    "questions": "should be an array",
+    "tool_calls": []
+  },
+  {
+    "goal": "Open app",
+    "questions": [],
+    "tool_calls": [
+      {
+        "name": "",
+        "args": {}
+      }
+    ]
+  },
+  {
+    "goal": "Open app",
+    "questions": [],
+    "tool_calls": [
+      {
+        "name": "open_app",
+        "args": "not-an-object"
+      }
+    ]
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "intervene": false,
+    "reason": "",
+    "response": "",
+    "ui_action": null
+  },
+  {
+    "intervene": true,
+    "reason": "Repeated edits suggest tone friction",
+    "response": "Try a shorter and more direct rewrite.",
+    "ui_action": {
+      "type": "bubble",
+      "priority": "low"
+    }
+  }
+]

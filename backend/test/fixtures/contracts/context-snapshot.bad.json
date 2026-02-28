@@ -1,0 +1,61 @@
+[
+  {},
+  {
+    "session_id": "sess-x",
+    "url": "not-a-url",
+    "domain": "example.com",
+    "page_type": "form",
+    "visible_text_chunks": [],
+    "active_element": null,
+    "form_fields": [],
+    "user_actions": [],
+    "hesitation_score": 0.1,
+    "timestamp": "2026-02-28T19:00:00.000Z"
+  },
+  {
+    "session_id": "sess-y",
+    "url": "https://example.com",
+    "domain": "example.com",
+    "page_type": "checkout",
+    "visible_text_chunks": [],
+    "active_element": null,
+    "form_fields": [],
+    "user_actions": [],
+    "hesitation_score": 0.1,
+    "timestamp": "2026-02-28T19:00:00.000Z"
+  },
+  {
+    "session_id": "sess-z",
+    "url": "https://example.com",
+    "domain": "example.com",
+    "page_type": "form",
+    "visible_text_chunks": [],
+    "active_element": {
+      "kind": "button",
+      "label": "Submit"
+    },
+    "form_fields": [],
+    "user_actions": [],
+    "hesitation_score": 0.1,
+    "timestamp": "2026-02-28T19:00:00.000Z"
+  },
+  {
+    "session_id": "sess-a",
+    "url": "https://example.com",
+    "domain": "example.com",
+    "page_type": "form",
+    "visible_text_chunks": [],
+    "active_element": null,
+    "form_fields": [
+      {
+        "field_id": "email",
+        "label": "Email",
+        "kind": "input",
+        "answered": false
+      }
+    ],
+    "user_actions": [],
+    "hesitation_score": 0.1,
+    "timestamp": "2026-02-28T19:00:00.000Z"
+  }
+]

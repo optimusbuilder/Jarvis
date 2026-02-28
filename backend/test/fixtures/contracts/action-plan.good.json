@@ -1,0 +1,21 @@
+[
+  {
+    "goal": "Open Google Chrome",
+    "questions": [],
+    "tool_calls": [
+      {
+        "name": "open_app",
+        "args": {
+          "name": "Google Chrome"
+        }
+      }
+    ]
+  },
+  {
+    "goal": "Clarify user intent",
+    "questions": [
+      "Do you want to open an app, a folder, or a website?"
+    ],
+    "tool_calls": []
+  }
+]

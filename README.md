@@ -391,6 +391,11 @@ We fail closed if required permissions are missing.
 
 Guiding rule: **mock the model for determinism**, then run a small number of live-model smoke tests.
 
+Phase 0 command entrypoints (repo root):
+- `make test-phase0` → `P0-C` (contract + unit suite)
+- `make ci-phase0` → `P0-IR` (lint + typecheck + `P0-C`)
+- CI policy details: `/Users/oluwaferanmioyelude/Documents/Aura/docs/CI_PLAN.md`
+
 ### 1) Extension: context capture + privacy filtering
 
 Test:

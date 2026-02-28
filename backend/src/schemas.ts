@@ -83,3 +83,9 @@ export const ttsRequestSchema = z.object({
   voice_id: z.string().min(1).optional()
 });
 
+export type DesktopState = z.infer<typeof desktopStateSchema>;
+export type ContextSnapshot = z.infer<typeof contextSnapshotSchema>;
+export type PlanRequest = z.infer<typeof planRequestSchema>;
+export type ToolCall = z.infer<typeof toolCallSchema>;
+export type ActionPlan = z.infer<typeof actionPlanSchema>;
+export type CopilotResponse = z.infer<typeof copilotResponseSchema>;

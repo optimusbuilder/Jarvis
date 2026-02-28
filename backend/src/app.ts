@@ -5,6 +5,8 @@ import { copilotResponseSchema, planRequestSchema, ttsRequestSchema } from "./sc
 import type { VertexPlanner } from "./vertex.js";
 import { elevenLabsTts } from "./elevenlabs.js";
 import { generateSilentWav } from "./stubAudio.js";
+import { redactContextSnapshot } from "./redaction.js";
+import { validateActionPlan } from "./contracts.js";
 
 export function createApp(args: {
   env: Env;
@@ -25,12 +27,16 @@ export function createApp(args: {
     }
 
     try {
-      const plan = await args.planner.plan({
+      const safeContext = parsed.data.context_snapshot
+        ? redactContextSnapshot(parsed.data.context_snapshot).snapshot
+        : undefined;
+      const rawPlan = await args.planner.plan({
         instruction: parsed.data.instruction,
-        context: parsed.data.context_snapshot,
+        context: safeContext,
         state: parsed.data.desktop_state
       });
-      return res.json(plan);
+      const validated = validateActionPlan(rawPlan);
+      return res.json(validated.data);
     } catch (err) {
       return res.status(502).json({ error: "planner_failed", message: String(err) });
     }

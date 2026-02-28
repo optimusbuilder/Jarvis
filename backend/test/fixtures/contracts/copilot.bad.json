@@ -1,0 +1,14 @@
+[
+  {},
+  {
+    "intervene": "yes",
+    "reason": "wrong type",
+    "response": ""
+  },
+  {
+    "intervene": true,
+    "reason": 9,
+    "response": "message",
+    "ui_action": null
+  }
+]
