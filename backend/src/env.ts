@@ -1,27 +1,36 @@
 import { z } from "zod";
 
+const optionalString = (minLength = 1) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().min(minLength).optional()
+  );
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
+  AURA_BACKEND_VERSION: optionalString(1),
 
   // Auth
-  AURA_BACKEND_AUTH_TOKEN: z.string().min(20).optional(),
+  AURA_BACKEND_AUTH_TOKEN: optionalString(20),
 
   // Modes (local-first)
   AURA_PLANNER_MODE: z.enum(["local", "vertex"]).default("local"),
   AURA_TTS_MODE: z.enum(["stub", "elevenlabs"]).default("stub"),
 
   // Vertex AI (required only when AURA_PLANNER_MODE=vertex)
-  GOOGLE_CLOUD_PROJECT: z.string().min(1).optional(),
+  GOOGLE_CLOUD_PROJECT: optionalString(1),
   GOOGLE_CLOUD_LOCATION: z.string().min(1).default("global"),
-  AURA_GEMINI_MODEL: z.string().min(1).optional(),
+  AURA_GEMINI_MODEL: optionalString(1),
 
   // ElevenLabs
-  ELEVENLABS_API_KEY: z.string().min(1).optional(),
-  ELEVENLABS_VOICE_ID: z.string().min(1).optional(),
-  ELEVENLABS_MODEL_ID: z.string().min(1).optional()
+  ELEVENLABS_API_KEY: optionalString(1),
+  ELEVENLABS_VOICE_ID: optionalString(1),
+  ELEVENLABS_MODEL_ID: optionalString(1)
 });
 
-export type Env = z.infer<typeof envSchema>;
+export type Env = Omit<z.infer<typeof envSchema>, "AURA_BACKEND_VERSION"> & {
+  AURA_BACKEND_VERSION: string;
+};
 
 export function loadEnv(): Env {
   const parsed = envSchema.safeParse(process.env);
@@ -49,5 +58,8 @@ export function loadEnv(): Env {
     throw new Error(`Invalid environment variables: ${issues.join("; ")}`);
   }
 
-  return env;
+  return {
+    ...env,
+    AURA_BACKEND_VERSION: env.AURA_BACKEND_VERSION ?? process.env.K_REVISION ?? "dev"
+  };
 }

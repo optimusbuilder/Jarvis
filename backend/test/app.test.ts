@@ -102,6 +102,7 @@ async function invokeRoute(args: {
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     PORT: 8080,
+    AURA_BACKEND_VERSION: "test",
     AURA_PLANNER_MODE: "local",
     AURA_TTS_MODE: "stub",
     GOOGLE_CLOUD_PROJECT: "test",
@@ -123,6 +124,8 @@ describe("backend app", () => {
     const res = await invokeRoute({ app, method: "get", path: "/healthz" });
     expect(res.status).toBe(200);
     expect((res.body as any).ok).toBe(true);
+    expect((res.body as any).version).toBe("test");
+    expect(res.headers["x-request-id"]).toBeTruthy();
   });
 
   it("plan requires auth when token configured", async () => {
@@ -137,6 +140,7 @@ describe("backend app", () => {
       body: { instruction: "hi" }
     });
     expect(res.status).toBe(401);
+    expect(res.headers["x-request-id"]).toBeTruthy();
   });
 
   it("plan returns plan when authed", async () => {
@@ -154,6 +158,20 @@ describe("backend app", () => {
     });
     expect(res.status).toBe(200);
     expect((res.body as any).goal).toBe("test");
+    expect(res.headers["x-request-id"]).toBeTruthy();
+  });
+
+  it("plan preserves provided request id", async () => {
+    const app = createApp({ env: makeEnv(), planner: stubPlanner });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/plan",
+      headers: { "x-request-id": "req-phase1-123" },
+      body: { instruction: "Open Chrome" }
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers["x-request-id"]).toBe("req-phase1-123");
   });
 
   it("plan fails closed on malformed planner output", async () => {
@@ -175,5 +193,6 @@ describe("backend app", () => {
     expect((res.body as any).tool_calls).toEqual([]);
     expect(Array.isArray((res.body as any).questions)).toBe(true);
     expect((res.body as any).questions[0]).toContain("No actions were executed");
+    expect(res.headers["x-request-id"]).toBeTruthy();
   });
 });

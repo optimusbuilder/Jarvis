@@ -20,6 +20,19 @@ make ci-phase0
 
 This is `P0-IR`: lint + typecheck + unit + contract tests with no network or secrets.
 
+## Phase 1 deployed smoke (`P1-C`)
+
+```bash
+export AURA_BACKEND_URL="https://YOUR_CLOUD_RUN_URL"
+export AURA_BACKEND_AUTH_TOKEN="YOUR_TOKEN"
+npm run test:phase1:smoke
+```
+
+This verifies:
+- `GET /healthz` returns `200` + `ok=true` + `version`
+- `POST /plan` returns `200` + valid action-plan JSON
+- `x-request-id` is returned for Cloud Run log correlation
+
 ## Other workspace tests
 
 ```bash

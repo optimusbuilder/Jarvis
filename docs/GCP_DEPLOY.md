@@ -44,17 +44,21 @@ Notes:
 - Keep Cloud Run + Vertex AI in the same region where possible.
 - If you use `gemini-3.1-pro-preview`, set `GOOGLE_CLOUD_LOCATION=global` (the model is served on global endpoints).
 
-## 3) Smoke test
+## 3) Smoke test (Phase 1 completion)
 
 ```bash
-curl -sS https://YOUR_CLOUD_RUN_URL/healthz
+export AURA_BACKEND_URL="https://YOUR_CLOUD_RUN_URL"
+export AURA_BACKEND_AUTH_TOKEN="YOUR_TOKEN"
+npm run test:phase1:smoke
 ```
 
-For authenticated endpoints:
+Equivalent manual checks:
 
 ```bash
-curl -sS https://YOUR_CLOUD_RUN_URL/plan \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+curl -i "$AURA_BACKEND_URL/healthz"
+
+curl -i "$AURA_BACKEND_URL/plan" \
+  -H "Authorization: Bearer $AURA_BACKEND_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"instruction":"Open Chrome","desktop_state":{"os":"macos","frontmost_app":"Finder"}}'
 ```
@@ -63,4 +67,16 @@ curl -sS https://YOUR_CLOUD_RUN_URL/plan \
 
 Record a short screen capture showing:
 - Cloud Run service page (URL + recent revisions)
-- Cloud Run logs containing requests to `/plan` and successful Vertex AI invocation
+- Cloud Run logs containing:
+  - `event="plan_request"` with a `request_id`
+  - `event="vertex_plan_success"` with the same `request_id`
+
+You can filter logs by `request_id`:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND jsonPayload.request_id="REPLACE_WITH_REQUEST_ID"' \
+  --project PROJECT_ID \
+  --limit 20 \
+  --format='value(timestamp,jsonPayload.event,jsonPayload.request_id)'
+```

@@ -18,6 +18,7 @@
     "test:contract": "npm -w backend run test:contract",
     "test:phase0": "make test-phase0",
     "ci:phase0": "make ci-phase0",
+    "test:phase1:smoke": "node scripts/p1-smoke.mjs",
     "test": "npm --workspaces run test",
     "lint": "npm --workspaces run lint",
     "typecheck": "npm --workspaces run typecheck"

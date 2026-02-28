@@ -369,6 +369,7 @@ Hard requirements enforced on backend:
 - strict request/response schema validation
 - content limits + redaction of sensitive fields
 - rate limits per session/device
+- structured logs with `request_id` correlation across `/plan` and Vertex calls
 - logs contain no secrets and no sensitive form values
 
 ---
@@ -395,6 +396,10 @@ Phase 0 command entrypoints (repo root):
 - `make test-phase0` → `P0-C` (contract + unit suite)
 - `make ci-phase0` → `P0-IR` (lint + typecheck + `P0-C`)
 - CI policy details: `/Users/oluwaferanmioyelude/Documents/Aura/docs/CI_PLAN.md`
+
+Phase 1 cloud smoke entrypoint:
+- `AURA_BACKEND_URL=... AURA_BACKEND_AUTH_TOKEN=... npm run test:phase1:smoke`
+- This checks `/healthz` + `/plan` and validates the action-plan response shape.
 
 ### 1) Extension: context capture + privacy filtering
 

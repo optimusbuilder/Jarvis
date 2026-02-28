@@ -1,8 +1,14 @@
 import type { Env } from "./env.js";
 import { actionPlanSchema } from "./schemas.js";
+import { logError, logInfo } from "./logging.js";
 
 export interface VertexPlanner {
-  plan(args: { instruction: string; context?: unknown; state?: unknown }): Promise<unknown>;
+  plan(args: {
+    instruction: string;
+    context?: unknown;
+    state?: unknown;
+    request_id?: string;
+  }): Promise<unknown>;
 }
 
 type MetadataTokenResponse = {
@@ -57,7 +63,17 @@ export function createVertexPlanner(env: Env): VertexPlanner {
   const model = env.AURA_GEMINI_MODEL;
 
   return {
-    async plan({ instruction, context, state }) {
+    async plan({ instruction, context, state, request_id }) {
+      const startedAt = Date.now();
+      logInfo("vertex_plan_start", {
+        request_id: request_id ?? null,
+        model,
+        location: env.GOOGLE_CLOUD_LOCATION,
+        instruction_chars: instruction.length,
+        has_context: context != null,
+        has_state: state != null
+      });
+
       const system = [
         "You are AURA, a careful computer-control planner.",
         "Return ONLY a single JSON object matching this schema:",
@@ -102,6 +118,11 @@ export function createVertexPlanner(env: Env): VertexPlanner {
 
       if (!res.ok) {
         const body = await res.text().catch(() => "");
+        logError("vertex_plan_http_error", {
+          request_id: request_id ?? null,
+          status: res.status,
+          duration_ms: Date.now() - startedAt
+        });
         throw new Error(`Vertex generateContent failed: ${res.status} ${body}`);
       }
 
@@ -113,13 +134,28 @@ export function createVertexPlanner(env: Env): VertexPlanner {
       try {
         parsed = JSON.parse(text);
       } catch {
+        logError("vertex_plan_parse_error", {
+          request_id: request_id ?? null,
+          duration_ms: Date.now() - startedAt
+        });
         throw new Error("Model did not return valid JSON");
       }
 
       const validated = actionPlanSchema.safeParse(parsed);
       if (!validated.success) {
+        logError("vertex_plan_schema_error", {
+          request_id: request_id ?? null,
+          duration_ms: Date.now() - startedAt
+        });
         throw new Error("Model JSON did not match action plan schema");
       }
+
+      logInfo("vertex_plan_success", {
+        request_id: request_id ?? null,
+        duration_ms: Date.now() - startedAt,
+        tool_calls: validated.data.tool_calls.length,
+        questions: validated.data.questions.length
+      });
 
       return validated.data;
     }
