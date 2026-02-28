@@ -4,8 +4,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8765),
 
   // Cloud Run backend
-  AURA_BACKEND_URL: z.string().url(),
-  AURA_BACKEND_AUTH_TOKEN: z.string().min(20),
+  AURA_BACKEND_URL: z.string().url().default("http://127.0.0.1:8080"),
+  AURA_BACKEND_AUTH_TOKEN: z.string().min(20).optional(),
 
   // whisper.cpp
   WHISPER_CPP_BIN: z.string().min(1).default("whisper-cli"),

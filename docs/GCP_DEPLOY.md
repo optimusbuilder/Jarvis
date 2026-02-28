@@ -35,7 +35,7 @@ gcloud run deploy aura-backend \
   --region us-central1 \
   --service-account aura-cloudrun@PROJECT_ID.iam.gserviceaccount.com \
   --allow-unauthenticated \
-  --set-env-vars GOOGLE_CLOUD_PROJECT=PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,AURA_GEMINI_MODEL=GEMINI_MODEL_ID,ELEVENLABS_VOICE_ID=VOICE_ID \
+  --set-env-vars AURA_PLANNER_MODE=vertex,AURA_TTS_MODE=elevenlabs,GOOGLE_CLOUD_PROJECT=PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,AURA_GEMINI_MODEL=GEMINI_MODEL_ID,ELEVENLABS_VOICE_ID=VOICE_ID \
   --set-secrets ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest,AURA_BACKEND_AUTH_TOKEN=AURA_BACKEND_AUTH_TOKEN:latest
 ```
 

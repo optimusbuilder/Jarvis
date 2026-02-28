@@ -25,10 +25,19 @@ export async function openApp(name: string): Promise<void> {
 }
 
 export async function openPath(path: string): Promise<void> {
-  await execFileAsync("open", [path]);
+  await execFileAsync("open", [expandUserPath(path)]);
 }
 
 export async function openUrl(url: string): Promise<void> {
   await execFileAsync("open", [url]);
 }
 
+function expandUserPath(input: string): string {
+  if (input === "~") return process.env.HOME ?? input;
+  if (input.startsWith("~/")) {
+    const home = process.env.HOME;
+    if (!home) return input;
+    return `${home}/${input.slice(2)}`;
+  }
+  return input;
+}

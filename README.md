@@ -262,6 +262,14 @@ Recommended secret storage:
 - **Cloud Run:** Google Secret Manager
 - **Desktop agent:** OS keychain (or local `.env` for dev only)
 
+### Local-only dev (no cloud calls)
+
+To get everything working locally before wiring GCP:
+- Run the backend locally with:
+  - `AURA_PLANNER_MODE=local` (heuristic planner; no Vertex calls)
+  - `AURA_TTS_MODE=stub` (returns stub audio; no ElevenLabs calls)
+- Leave `AURA_BACKEND_AUTH_TOKEN` empty for local testing (optional).
+
 ### Google Cloud (required)
 
 GCP resources:
@@ -278,6 +286,10 @@ Cloud Run service account permissions (minimum starting point):
 Backend env vars (Cloud Run):
 
 ```bash
+## Required for Cloud Run deployment
+AURA_PLANNER_MODE="vertex"
+AURA_TTS_MODE="elevenlabs"
+
 GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
 GOOGLE_CLOUD_LOCATION="global"
 
@@ -297,8 +309,14 @@ Note: `gemini-3.1-pro-preview` is available on **global** endpoints, so `GOOGLE_
 Desktop agent env vars (local):
 
 ```bash
+# Local backend:
+# AURA_BACKEND_URL="http://127.0.0.1:8080"
+#
+# Cloud Run backend:
 AURA_BACKEND_URL="https://<cloud-run-service-url>"
-AURA_BACKEND_AUTH_TOKEN="(shared token or auth config for backend)"
+
+# Optional for local; required if Cloud Run enforces auth.
+AURA_BACKEND_AUTH_TOKEN="(shared token for backend)"
 ```
 
 ### Local STT (no keys)

@@ -1,6 +1,7 @@
 import type { Env } from "./env.js";
 
 function authHeaders(env: Env): Record<string, string> {
+  if (!env.AURA_BACKEND_AUTH_TOKEN) return {};
   return { authorization: `Bearer ${env.AURA_BACKEND_AUTH_TOKEN}` };
 }
 
@@ -46,4 +47,3 @@ export async function backendTts(args: { env: Env; text: string }): Promise<Arra
   }
   return res.arrayBuffer();
 }
-

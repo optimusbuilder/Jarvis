@@ -4,6 +4,7 @@ import { requireAuth } from "./auth.js";
 import { copilotResponseSchema, planRequestSchema, ttsRequestSchema } from "./schemas.js";
 import type { VertexPlanner } from "./vertex.js";
 import { elevenLabsTts } from "./elevenlabs.js";
+import { generateSilentWav } from "./stubAudio.js";
 
 export function createApp(args: {
   env: Env;
@@ -52,10 +53,14 @@ export function createApp(args: {
       return res.status(400).json({ error: "invalid_request" });
     }
 
-    const voiceId = parsed.data.voice_id ?? args.env.ELEVENLABS_VOICE_ID;
-    if (!voiceId) {
-      return res.status(500).json({ error: "tts_not_configured" });
+    if (args.env.AURA_TTS_MODE !== "elevenlabs") {
+      const wav = generateSilentWav({ seconds: 0.35 });
+      res.setHeader("content-type", "audio/wav");
+      return res.status(200).send(wav);
     }
+
+    const voiceId = parsed.data.voice_id ?? args.env.ELEVENLABS_VOICE_ID;
+    if (!voiceId) return res.status(500).json({ error: "tts_not_configured" });
 
     try {
       const out = await elevenLabsTts({ env: args.env, voiceId, text: parsed.data.text });
@@ -68,4 +73,3 @@ export function createApp(args: {
 
   return app;
 }
-
