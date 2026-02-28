@@ -279,7 +279,7 @@ Backend env vars (Cloud Run):
 
 ```bash
 GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
-GOOGLE_CLOUD_REGION="us-central1"
+GOOGLE_CLOUD_LOCATION="global"
 
 AURA_GEMINI_MODEL="(Gemini model id on Vertex AI)"
 
@@ -291,6 +291,8 @@ AURA_FIRESTORE_EVENTS_COLLECTION="events"
 AURA_SENSITIVE_DOMAIN_BLOCKLIST="accounts.google.com,bankofamerica.com,chase.com"
 AURA_LOG_LEVEL="info"
 ```
+
+Note: `gemini-3.1-pro-preview` is available on **global** endpoints, so `GOOGLE_CLOUD_LOCATION` should be `global` when using that model.
 
 Desktop agent env vars (local):
 

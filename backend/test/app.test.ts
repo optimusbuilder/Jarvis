@@ -8,7 +8,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     PORT: 8080,
     GOOGLE_CLOUD_PROJECT: "test",
-    GOOGLE_CLOUD_REGION: "us-central1",
+    GOOGLE_CLOUD_LOCATION: "global",
     AURA_GEMINI_MODEL: "gemini-test",
     ...overrides
   };
@@ -51,4 +51,3 @@ describe("backend app", () => {
     expect(res.body.goal).toBe("test");
   });
 });
-

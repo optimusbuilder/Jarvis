@@ -1,47 +1,25 @@
-import { VertexAI } from "@google-cloud/vertexai";
-import { z } from "zod";
+import { GoogleGenAI } from "@google/genai";
 import type { Env } from "./env.js";
 import { actionPlanSchema } from "./schemas.js";
-
-const vertexTextResponseSchema = z.object({
-  candidates: z
-    .array(
-      z.object({
-        content: z.object({
-          parts: z.array(z.object({ text: z.string().optional() })).default([])
-        })
-      })
-    )
-    .default([])
-});
 
 export interface VertexPlanner {
   plan(args: { instruction: string; context?: unknown; state?: unknown }): Promise<unknown>;
 }
 
 export function createVertexPlanner(env: Env): VertexPlanner {
-  const vertex = new VertexAI({
+  const ai = new GoogleGenAI({
+    vertexai: true,
     project: env.GOOGLE_CLOUD_PROJECT,
-    location: env.GOOGLE_CLOUD_REGION
-  });
-
-  const model = vertex.getGenerativeModel({
-    model: env.AURA_GEMINI_MODEL,
-    generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 1024,
-      responseMimeType: "application/json"
-    }
+    location: env.GOOGLE_CLOUD_LOCATION
   });
 
   return {
     async plan({ instruction, context, state }) {
-      const prompt = JSON.stringify(
+      const payload = JSON.stringify(
         {
           instruction,
           desktop_state: state ?? null,
-          context_snapshot: context ?? null,
-          output_schema: "action_plan_v1"
+          context_snapshot: context ?? null
         },
         null,
         2
@@ -55,20 +33,17 @@ export function createVertexPlanner(env: Env): VertexPlanner {
         "Never include markdown. Never include explanations outside JSON."
       ].join("\n");
 
-      const response = await model.generateContent({
-        contents: [
-          { role: "user", parts: [{ text: system + "\n\n" + prompt }] }
-        ]
+      const response = await ai.models.generateContent({
+        model: env.AURA_GEMINI_MODEL,
+        contents: system + "\n\n" + payload,
+        config: {
+          temperature: 0.2,
+          maxOutputTokens: 1024,
+          responseMimeType: "application/json"
+        }
       });
 
-      const parsed = vertexTextResponseSchema.safeParse(response.response);
-      if (!parsed.success) {
-        throw new Error("Vertex response shape unexpected");
-      }
-
-      const text =
-        parsed.data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-
+      const text = response.text;
       let json: unknown;
       try {
         json = JSON.parse(text);

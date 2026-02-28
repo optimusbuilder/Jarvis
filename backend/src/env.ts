@@ -8,7 +8,7 @@ const envSchema = z.object({
 
   // Vertex AI
   GOOGLE_CLOUD_PROJECT: z.string().min(1),
-  GOOGLE_CLOUD_REGION: z.string().min(1).default("us-central1"),
+  GOOGLE_CLOUD_LOCATION: z.string().min(1).default("global"),
   AURA_GEMINI_MODEL: z.string().min(1),
 
   // ElevenLabs
@@ -29,4 +29,3 @@ export function loadEnv(): Env {
   }
   return parsed.data;
 }
-
