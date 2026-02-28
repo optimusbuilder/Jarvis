@@ -33,11 +33,15 @@ function ensureActionPlanShape(payload) {
 }
 
 async function run() {
-  const baseUrl = getEnv("AURA_BACKEND_URL");
+  const baseUrl = getEnv("AURA_BACKEND_URL").trim().replace(/\/+$/, "");
   const authToken = getEnv("AURA_BACKEND_AUTH_TOKEN", false);
+  console.log(`Using backend URL: ${baseUrl}`);
 
-  const healthRes = await fetch(`${baseUrl.replace(/\/$/, "")}/healthz`);
-  if (!healthRes.ok) fail(`GET /healthz failed with status ${healthRes.status}`);
+  const healthRes = await fetch(`${baseUrl}/healthz`);
+  if (!healthRes.ok) {
+    const body = await healthRes.text().catch(() => "");
+    fail(`GET /healthz failed with status ${healthRes.status}. Body preview: ${body.slice(0, 200)}`);
+  }
   const health = await healthRes.json();
   if (!health || health.ok !== true) fail("GET /healthz payload missing ok=true");
   if (typeof health.version !== "string" || !health.version) fail("GET /healthz payload missing version");
@@ -46,7 +50,7 @@ async function run() {
   const headers = { "content-type": "application/json" };
   if (authToken) headers.authorization = `Bearer ${authToken}`;
 
-  const planRes = await fetch(`${baseUrl.replace(/\/$/, "")}/plan`, {
+  const planRes = await fetch(`${baseUrl}/plan`, {
     method: "POST",
     headers,
     body: JSON.stringify({

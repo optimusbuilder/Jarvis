@@ -11,7 +11,7 @@ const env = loadEnv();
 const planner = env.AURA_PLANNER_MODE === "vertex" ? createVertexPlanner(env) : createLocalPlanner();
 const app = createApp({ env, planner });
 
-app.listen(env.PORT, () => {
+app.listen(env.PORT||8080,"0.0.0.0", () => {
   logInfo("backend_started", {
     port: env.PORT,
     planner_mode: env.AURA_PLANNER_MODE,

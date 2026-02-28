@@ -14,7 +14,7 @@ This deploys the `backend/` service to Cloud Run and configures:
   - Secret Manager API
   - Artifact Registry API
   - Cloud Build API
-- Runtime service account exists (example): `aura-cloudrun@PROJECT_ID.iam.gserviceaccount.com`
+- Runtime service account exists (example): `aura-35@PROJECT_ID.iam.gserviceaccount.com`
   - Roles:
     - `roles/aiplatform.user`
     - `roles/secretmanager.secretAccessor` (or per-secret binding)
@@ -30,12 +30,17 @@ Create:
 From the repo root:
 
 ```bash
+PROJECT_ID="gen-lang-client-0471452193"
+REGION="us-central1"
+RUNTIME_SA="aura-35@${PROJECT_ID}.iam.gserviceaccount.com"
+
 gcloud run deploy aura-backend \
+  --project "$PROJECT_ID" \
   --source backend \
-  --region us-central1 \
-  --service-account aura-cloudrun@PROJECT_ID.iam.gserviceaccount.com \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
   --allow-unauthenticated \
-  --set-env-vars AURA_PLANNER_MODE=vertex,AURA_TTS_MODE=elevenlabs,GOOGLE_CLOUD_PROJECT=PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,AURA_GEMINI_MODEL=GEMINI_MODEL_ID,ELEVENLABS_VOICE_ID=VOICE_ID \
+  --set-env-vars AURA_PLANNER_MODE=vertex,AURA_TTS_MODE=elevenlabs,GOOGLE_CLOUD_PROJECT="$PROJECT_ID",GOOGLE_CLOUD_LOCATION=global,AURA_GEMINI_MODEL=gemini-3.1-pro-preview,ELEVENLABS_VOICE_ID=YOUR_REAL_VOICE_ID \
   --set-secrets ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest,AURA_BACKEND_AUTH_TOKEN=AURA_BACKEND_AUTH_TOKEN:latest
 ```
 
@@ -47,8 +52,8 @@ Notes:
 ## 3) Smoke test (Phase 1 completion)
 
 ```bash
-export AURA_BACKEND_URL="https://YOUR_CLOUD_RUN_URL"
-export AURA_BACKEND_AUTH_TOKEN="YOUR_TOKEN"
+export AURA_BACKEND_URL="$(gcloud run services describe aura-backend --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+export AURA_BACKEND_AUTH_TOKEN="$(gcloud secrets versions access latest --secret=AURA_BACKEND_AUTH_TOKEN --project "$PROJECT_ID")"
 npm run test:phase1:smoke
 ```
 
