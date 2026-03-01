@@ -1,103 +1,100 @@
-type PageType = "article" | "form" | "product" | "editor" | "search" | "other";
+import { pickSuggestion, SuggestionBubble } from "./bubble.js";
+import { buildContextSnapshot } from "./snapshot.js";
+import type { UserAction } from "./types.js";
 
-function getDomain(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return "";
+const SNAPSHOT_INTERVAL_MS = 5000;
+const USER_ACTION_LIMIT = 30;
+
+const userActions: UserAction[] = [];
+const fieldEditCounts = new Map<string, number>();
+let lastInteractionAtMs = Date.now();
+let lastBubbleShownAtMs = 0;
+
+function recordAction(action: UserAction): void {
+  userActions.push(action);
+  if (userActions.length > USER_ACTION_LIMIT) {
+    userActions.splice(0, userActions.length - USER_ACTION_LIMIT);
   }
 }
 
-function inferPageType(): PageType {
-  const hasForm = document.querySelector("form, input, textarea, select") !== null;
-  if (hasForm) return "form";
-  const hasEditor =
-    document.querySelector("[contenteditable='true'], textarea") !== null;
-  if (hasEditor) return "editor";
-  return "other";
+function nowIso(): string {
+  return new Date().toISOString();
 }
 
-function textChunks(): Array<{ id: string; text: string; source: "h1" | "p" | "li" | "label" | "other" }> {
-  const maxChars = 6000;
-  const selectors = ["h1", "p", "li", "label"];
-  const out: Array<{ id: string; text: string; source: "h1" | "p" | "li" | "label" | "other" }> = [];
+function touch(type: string, target?: string, details?: string): void {
+  lastInteractionAtMs = Date.now();
+  recordAction({ type, target, details, at: nowIso() });
+}
 
-  let used = 0;
-  let i = 0;
-  for (const sel of selectors) {
-    const nodes = Array.from(document.querySelectorAll(sel));
-    for (const node of nodes) {
-      const t = (node.textContent ?? "").trim().replace(/\s+/g, " ");
-      if (!t) continue;
-      if (t.length < 3) continue;
-      const remaining = maxChars - used;
-      if (remaining <= 0) return out;
-      const clipped = t.slice(0, remaining);
-      out.push({ id: `${sel}:${i++}`, text: clipped, source: sel as any });
-      used += clipped.length;
-      if (used >= maxChars) return out;
+function elementKey(el: EventTarget | null): string | null {
+  if (!(el instanceof HTMLElement)) return null;
+  if (el.id) return `id:${el.id}`;
+  const name = (el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).name;
+  if (name) return `name:${name}`;
+  return `${el.tagName.toLowerCase()}:unknown`;
+}
+
+function trackActivity(): void {
+  document.addEventListener("click", (event) => {
+    touch("click", elementKey(event.target) ?? undefined);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const key = event.key.length === 1 ? "character" : event.key;
+    touch("keydown", elementKey(event.target) ?? undefined, key);
+  });
+
+  document.addEventListener("selectionchange", () => {
+    const selection = document.getSelection()?.toString() ?? "";
+    if (!selection.trim()) return;
+    touch("selection", undefined, `${selection.trim().slice(0, 80)}`);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    touch("visibility_change", undefined, document.visibilityState);
+  });
+
+  const onEdit = (event: Event) => {
+    const key = elementKey(event.target);
+    if (!key) return;
+    const next = (fieldEditCounts.get(key) ?? 0) + 1;
+    fieldEditCounts.set(key, next);
+    touch("edit", key);
+    if (next >= 3) {
+      touch("repeated_edit", key, `count=${next}`);
     }
+  };
+
+  document.addEventListener("input", onEdit, true);
+  document.addEventListener("change", onEdit, true);
+}
+
+function repeatedEditCount(): number {
+  let max = 0;
+  for (const count of fieldEditCounts.values()) {
+    if (count > max) max = count;
   }
-  return out;
+  return max;
 }
 
-function activeElementSummary(): null | {
-  kind: "input" | "textarea" | "contenteditable" | "select";
-  label: string;
-  input_type?: string;
-  value_length?: number;
-} {
-  const el = document.activeElement as HTMLElement | null;
-  if (!el) return null;
-
-  const tag = el.tagName.toLowerCase();
-  const isContentEditable = (el as any).isContentEditable === true;
-
-  let kind: "input" | "textarea" | "contenteditable" | "select" | null = null;
-  if (tag === "input") kind = "input";
-  if (tag === "textarea") kind = "textarea";
-  if (tag === "select") kind = "select";
-  if (isContentEditable) kind = "contenteditable";
-  if (!kind) return null;
-
-  const aria = el.getAttribute("aria-label") ?? "";
-  const name = (el as any).name ?? "";
-  const id = el.id ?? "";
-  const label =
-    aria ||
-    (id ? document.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent?.trim() : "") ||
-    name ||
-    "";
-
-  const inputType = tag === "input" ? ((el as HTMLInputElement).type ?? "text") : undefined;
-  const valueLength =
-    kind === "input" || kind === "textarea"
-      ? (((el as HTMLInputElement | HTMLTextAreaElement).value ?? "").length || 0)
-      : undefined;
-
-  return {
-    kind,
-    label,
-    input_type: inputType,
-    value_length: valueLength
-  };
-}
-
-function snapshot(sessionId: string) {
-  const url = window.location.href;
-  return {
-    session_id: sessionId,
-    url,
-    domain: getDomain(url),
-    page_type: inferPageType(),
-    page_title: document.title ?? "",
-    visible_text_chunks: textChunks(),
-    active_element: activeElementSummary(),
-    form_fields: [],
-    user_actions: [],
-    hesitation_score: 0,
-    timestamp: new Date().toISOString()
-  };
+function createBubble(): SuggestionBubble {
+  return new SuggestionBubble(({ action, suggestion }) => {
+    touch("bubble_feedback", undefined, `${action}:${suggestion.kind}`);
+    try {
+      chrome.runtime.sendMessage({
+        type: "AURA_BUBBLE_FEEDBACK",
+        feedback: {
+          action,
+          kind: suggestion.kind,
+          reason: suggestion.reason,
+          response: suggestion.response,
+          at: nowIso()
+        }
+      });
+    } catch {
+      // ignore runtime failures
+    }
+  });
 }
 
 async function getOrCreateSessionId(): Promise<string> {
@@ -109,16 +106,40 @@ async function getOrCreateSessionId(): Promise<string> {
   return newId;
 }
 
-async function loop() {
+async function startLoop(): Promise<void> {
+  trackActivity();
   const sessionId = await getOrCreateSessionId();
+  const bubble = createBubble();
+
   setInterval(() => {
-    try {
-      chrome.runtime.sendMessage({ type: "AURA_SNAPSHOT", snapshot: snapshot(sessionId) });
-    } catch {
-      // ignore
+    const snapshot = buildContextSnapshot({
+      sessionId,
+      url: window.location.href,
+      doc: document,
+      state: {
+        userActions: [...userActions],
+        lastInteractionAtMs,
+        repeatedEditCount: repeatedEditCount()
+      }
+    });
+
+    const suggestion = pickSuggestion({
+      snapshot,
+      lastShownAtMs: lastBubbleShownAtMs,
+      nowMs: Date.now()
+    });
+    if (suggestion && !bubble.visible) {
+      lastBubbleShownAtMs = Date.now();
+      bubble.show(suggestion);
+      touch("bubble_shown", undefined, suggestion.kind);
     }
-  }, 5000);
+
+    try {
+      chrome.runtime.sendMessage({ type: "AURA_SNAPSHOT", snapshot });
+    } catch {
+      // extension may be unavailable while reloading
+    }
+  }, SNAPSHOT_INTERVAL_MS);
 }
 
-void loop();
-
+void startLoop();

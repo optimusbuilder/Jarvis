@@ -73,6 +73,7 @@ npm -w extension run build
 Load unpacked extension in Chrome:
 - Chrome → Extensions → Enable Developer Mode → “Load unpacked”
 - Select the `extension/` folder (it contains `manifest.json`)
+- For local `file://` fixture pages, enable “Allow access to file URLs” for the extension.
 
 Verify snapshot transport:
 
@@ -81,6 +82,12 @@ curl http://127.0.0.1:8765/snapshot
 ```
 
 Visit any webpage and re-run the curl; `snapshot` should change over time.
+
+Optional Phase 3 fixture:
+- Open `extension/test/fixtures/p3-fixture.html` in Chrome and interact with fields.
+- The extension should:
+  - send redacted snapshots (no password/SSN/card values),
+  - show an AURA suggestion bubble with Accept/Dismiss when hesitation is detected.
 
 ## 5) Run instruction loop (desktop → backend → execute)
 

@@ -1,4 +1,4 @@
-.PHONY: test-unit test-contract test-phase0 ci-phase0 test-phase2-completion test-phase2-integration
+.PHONY: test-unit test-contract test-phase0 ci-phase0 test-phase2-completion test-phase2-integration test-phase3-unit test-phase3-completion
 
 test-unit:
 	npm run test:unit
@@ -18,3 +18,9 @@ test-phase2-completion:
 
 test-phase2-integration:
 	npm run test:phase2:integration
+
+test-phase3-unit:
+	npm run test:phase3:unit
+
+test-phase3-completion:
+	npm run test:phase3:completion

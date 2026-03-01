@@ -68,6 +68,50 @@ This verifies:
 - response schema remains stable despite backend tool-name variations
 - `request_id` is preserved and correlated across components
 
+## Phase 3 extension unit tests
+
+```bash
+npm run test:phase3:unit
+```
+
+This verifies:
+- snapshot builder excludes sensitive text/fields
+- snapshot shape remains compatible with backend schema
+- bubble suggestion heuristics trigger only when useful
+
+## Phase 3 extension completion (`P3-C`)
+
+Prereqs:
+- desktop agent running (`npm -w desktop run dev`)
+- extension loaded unpacked from `extension/`
+- open local fixture page: `extension/test/fixtures/p3-fixture.html`
+
+Then run:
+
+```bash
+npm run test:phase3:completion
+```
+
+This verifies:
+- snapshot transport reaches desktop agent `/snapshot`
+- hidden/password/credit-card/SSN data is redacted before transport
+- `visible_text_chunks`, `form_fields`, and `user_actions` are present
+
+## Phase 3 integration/regression (`P3-IR`)
+
+Run:
+
+```bash
+npm run ci:phase0
+npm run test:phase2:integration
+npm run test:phase3:unit
+npm run test:phase3:completion
+```
+
+Expected:
+- Phase 0 and Phase 2 behavior still pass unchanged
+- extension snapshot/redaction changes do not break desktop or backend contracts
+
 ## Other workspace tests
 
 ```bash

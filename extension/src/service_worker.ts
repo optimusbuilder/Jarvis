@@ -1,15 +1,36 @@
 const AGENT_BASE_URL = "http://127.0.0.1:8765";
+const FEEDBACK_KEY = "aura_bubble_feedback_log";
 
-chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
-  if (!msg || msg.type !== "AURA_SNAPSHOT") return;
-
-  const payload = msg.snapshot;
-  void fetch(`${AGENT_BASE_URL}/snapshot`, {
+async function postSnapshot(payload: unknown): Promise<void> {
+  await fetch(`${AGENT_BASE_URL}/snapshot`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload)
-  }).catch(() => {
-    // Agent may not be running; keep silent for MVP.
   });
-});
+}
 
+async function persistFeedback(feedback: unknown): Promise<void> {
+  const existing = await chrome.storage.session.get([FEEDBACK_KEY]);
+  const list = Array.isArray(existing[FEEDBACK_KEY]) ? (existing[FEEDBACK_KEY] as unknown[]) : [];
+  list.push(feedback);
+  const max = 50;
+  const trimmed = list.length > max ? list.slice(list.length - max) : list;
+  await chrome.storage.session.set({ [FEEDBACK_KEY]: trimmed });
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
+  if (!msg || typeof msg !== "object") return;
+
+  if (msg.type === "AURA_SNAPSHOT") {
+    void postSnapshot(msg.snapshot).catch(() => {
+      // Agent may not be running; keep silent in MVP.
+    });
+    return;
+  }
+
+  if (msg.type === "AURA_BUBBLE_FEEDBACK") {
+    void persistFeedback(msg.feedback).catch(() => {
+      // best-effort telemetry for local UX testing.
+    });
+  }
+});
