@@ -68,6 +68,34 @@ The UI gives users:
   - `Cmd/Ctrl + Shift + Space` → toggle push-to-talk
   - `Cmd/Ctrl + Shift + K` → toggle kill switch
 
+Optional native overlay companion (Siri-style launcher):
+
+```bash
+npm run install:companion
+npm run dev:companion
+```
+
+Companion hotkeys:
+- `Cmd/Ctrl + Shift + A` → show/hide overlay
+- `Cmd/Ctrl + Shift + Space` → start/stop voice command
+- `Cmd/Ctrl + Shift + K` → toggle kill switch
+
+Companion reliability toggles (in overlay + tray menu):
+- Open at login
+- Sound cues
+- Auto-restart companion
+- Start/stop Aura stack (`npm run dev:all`)
+
+Companion docs: `companion/README.md`
+
+Build distributable macOS app bundle:
+
+```bash
+npm run build:companion:app
+```
+
+Artifact: `companion/dist/mac/AURA Companion.app`
+
 API verify (optional for debugging):
 
 ```bash

@@ -421,6 +421,18 @@ Expected:
 npm test
 ```
 
+Companion shell syntax smoke:
+
+```bash
+npm run test:companion
+```
+
+Companion packaging script syntax smoke:
+
+```bash
+node --check scripts/prepare-companion-embedded.mjs
+```
+
 ## Notes
 
 - Contract fixtures are under `/Users/oluwaferanmioyelude/Documents/Aura/backend/test/fixtures/contracts`.

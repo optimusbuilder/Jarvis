@@ -17,6 +17,8 @@ build/
 coverage/
 .turbo/
 .cache/
+companion/embedded/
+companion/dist/
 
 # Logs
 logs/
@@ -30,4 +32,3 @@ test-results/
 __pycache__/
 .pytest_cache/
 .venv/
-

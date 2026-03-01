@@ -1,0 +1,47 @@
+{
+  "name": "@aura/companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "build:mac:app": "electron-builder --mac dir --publish never",
+    "build:mac:dmg": "electron-builder --mac dmg --publish never",
+    "test": "node --check main.js && node --check preload.js && node --check renderer/renderer.js",
+    "lint": "echo \"(todo)\"",
+    "typecheck": "echo \"(todo)\""
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.aura.companion",
+    "productName": "AURA Companion",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "embedded",
+        "to": "embedded"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    }
+  }
+}

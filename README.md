@@ -404,6 +404,31 @@ Page-level shortcuts (when UI tab is focused):
 - `Cmd/Ctrl + Shift + Space` → toggle push-to-talk
 - `Cmd/Ctrl + Shift + K` → toggle kill switch
 
+### Optional native Companion (Siri-style)
+
+For a floating mini-agent UI + global shortcuts:
+
+1. Install companion deps: `npm run install:companion`
+2. Start backend + desktop agent: `npm run dev:all`
+3. Start companion: `npm run dev:companion`
+
+Build a double-clickable app bundle:
+- `npm run build:companion:app`
+- output: `/Users/oluwaferanmioyelude/Documents/Aura/companion/dist/mac/AURA Companion.app`
+
+Global shortcuts:
+- `Cmd/Ctrl + Shift + A` → show/hide companion
+- `Cmd/Ctrl + Shift + Space` → start/stop voice command
+- `Cmd/Ctrl + Shift + K` → toggle kill switch
+
+Companion reliability/accessibility toggles:
+- open at login
+- sound cues for listen/complete/error states
+- auto-restart companion on fatal crash
+- auto-start/auto-restart Aura stack
+
+Companion details: `/Users/oluwaferanmioyelude/Documents/Aura/companion/README.md`
+
 ---
 
 ## Testing Strategy (How We Prove Each Feature Works)
