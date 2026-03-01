@@ -40,7 +40,8 @@ npm run build:companion:app
 ```
 
 Output app path:
-- `companion/dist/mac/AURA Companion.app`
+- `companion/dist/mac-arm64/AURA Companion.app` (Apple Silicon)
+- `companion/dist/mac/AURA Companion.app` (Intel)
 
 Optional DMG:
 
@@ -49,7 +50,7 @@ npm run build:companion:dmg
 ```
 
 Output DMG path:
-- `companion/dist/AURA Companion-0.1.0.dmg` (name may include architecture/version)
+- `companion/dist/*.dmg` (name includes version/architecture)
 
 ## Hotkeys
 

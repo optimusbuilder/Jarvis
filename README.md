@@ -414,7 +414,7 @@ For a floating mini-agent UI + global shortcuts:
 
 Build a double-clickable app bundle:
 - `npm run build:companion:app`
-- output: `/Users/oluwaferanmioyelude/Documents/Aura/companion/dist/mac/AURA Companion.app`
+- output (Apple Silicon): `/Users/oluwaferanmioyelude/Documents/Aura/companion/dist/mac-arm64/AURA Companion.app`
 
 Global shortcuts:
 - `Cmd/Ctrl + Shift + A` → show/hide companion

@@ -95,6 +95,7 @@ npm run build:companion:app
 ```
 
 Artifact: `companion/dist/mac/AURA Companion.app`
+Artifact (Apple Silicon): `companion/dist/mac-arm64/AURA Companion.app`
 
 API verify (optional for debugging):
 
