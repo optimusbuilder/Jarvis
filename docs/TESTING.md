@@ -162,6 +162,158 @@ Expected:
 - no regressions in previous phases
 - voice endpoints and STT heuristics work without breaking existing agent routes
 
+## Phase 5 deployed TTS smoke (`P5-C`)
+
+Prereqs:
+- Cloud Run backend deployed and reachable
+- `AURA_BACKEND_URL` set to your deployed backend URL
+- `AURA_BACKEND_AUTH_TOKEN` set if backend auth is enabled
+
+Then run:
+
+```bash
+npm run test:phase5:smoke
+```
+
+This verifies:
+- `POST /tts` returns `200`
+- response content type is audio
+- audio payload size is non-trivial (not empty)
+- optional output artifact can be saved with `AURA_TTS_OUTPUT_PATH`
+
+## Phase 5 full loop integration (`P5-IR`)
+
+Prereqs:
+- desktop agent running (`npm -w desktop run dev`)
+- backend reachable from desktop agent (`AURA_BACKEND_URL` configured)
+
+Then run:
+
+```bash
+npm run test:phase5:integration
+```
+
+This verifies:
+- voice transcription + planning loop works (`/voice/run`)
+- response TTS path works (`/voice/respond` → backend `/tts`)
+- local audio artifact is produced without breaking dry-run safety
+
+## Phase 5 regression gate
+
+Run:
+
+```bash
+npm run ci:phase0
+npm run test:phase3:unit
+npm run test:phase4:completion
+npm run test:phase5:smoke
+npm run test:phase5:integration
+```
+
+Expected:
+- previous phases still pass
+- deployed TTS and local response-audio path both pass
+
+## Phase 6 browser automation completion (`P6-C`)
+
+Prereqs:
+- desktop agent running (`npm -w desktop run dev`)
+- browser tool mode set (`AURA_BROWSER_MODE=http` for deterministic local fixtures)
+
+Then run:
+
+```bash
+npm run test:phase6:completion
+```
+
+This verifies:
+- deterministic browser flow executes end-to-end (`new_tab → go → search → click_result → extract_text`)
+- post-action verification strings include navigation and extraction state
+- execution succeeds against local fixture pages (no external site dependency)
+
+## Phase 6 integration/regression (`P6-IR`)
+
+Prereqs:
+- backend reachable from desktop agent
+- desktop agent running with voice pipeline configured
+
+Then run:
+
+```bash
+npm run test:phase6:integration
+```
+
+This verifies:
+- voice pipeline still works (`/voice/run`)
+- browser deterministic flow still works in same session
+- snapshot endpoint remains healthy (no regression to extension bridge APIs)
+
+## Phase 6 regression gate
+
+Run:
+
+```bash
+npm run ci:phase0
+npm run test:phase4:completion
+npm run test:phase5:integration
+npm run test:phase6:completion
+npm run test:phase6:integration
+```
+
+Expected:
+- no regressions in voice/TTS/browser pipelines
+- deterministic browser automation remains stable
+
+## Phase 7 system tools completion (`P7-C`)
+
+Prereqs:
+- desktop agent running (`npm -w desktop run dev`)
+- filesystem target paths under allowed roots (default includes system temp dir)
+
+Then run:
+
+```bash
+npm run test:phase7:completion
+```
+
+This verifies:
+- `create_folder`, `rename_path`, `move_path`, and `search_files` work on a temp sandbox
+- `trash_path` is blocked without explicit `confirm_action`
+- `confirm_action` unlocks a single destructive `trash_path` execution
+
+## Phase 7 mixed workflow integration (`P7-IR`)
+
+Prereqs:
+- desktop agent running with browser mode available (`AURA_BROWSER_MODE=http` recommended for deterministic fixtures)
+
+Then run:
+
+```bash
+npm run test:phase7:integration
+```
+
+This verifies:
+- browser deterministic flow still works in the same `/execute` plan
+- filesystem tools still work in the same run (`create_folder` + `search_files`)
+- snapshot bridge endpoint remains healthy
+
+## Phase 7 regression gate
+
+Run:
+
+```bash
+npm run ci:phase0
+npm run test:phase6:completion
+npm run test:phase6:integration
+npm run test:phase7:completion
+npm run test:phase7:integration
+```
+
+Expected:
+- no regressions in prior browser/voice/TTS behavior
+- destructive filesystem actions stay gated by confirmation
+- mixed browser + system execution remains stable
+
 ## Other workspace tests
 
 ```bash

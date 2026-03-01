@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env.js";
 import { createAgentApp } from "../src/app.js";
@@ -112,7 +115,13 @@ const env: Env = {
   WHISPER_NO_GPU: true,
   WHISPER_TIMEOUT_MS: 120000,
   AURA_STT_MIN_WORDS: 2,
-  AURA_STT_MIN_CHARS: 8
+  AURA_STT_MIN_CHARS: 8,
+  AURA_BROWSER_MODE: "http",
+  AURA_BROWSER_TIMEOUT_MS: 15000,
+  AURA_BROWSER_HEADLESS: true,
+  AURA_ALLOWED_PATHS: undefined,
+  AURA_SEARCH_MAX_SCAN: 5000,
+  AURA_AUDIO_PLAYER_CMD: undefined
 };
 
 describe("desktop agent app", () => {
@@ -129,6 +138,9 @@ describe("desktop agent app", () => {
     expect(res.status).toBe(200);
     expect(Array.isArray((res.body as any).tools)).toBe(true);
     expect((res.body as any).schemas.open_app).toBeTruthy();
+    expect((res.body as any).tools).toContain("browser_go");
+    expect((res.body as any).tools).toContain("create_folder");
+    expect((res.body as any).tools).toContain("trash_path");
   });
 
   it("execute blocks unknown tools", async () => {
@@ -188,6 +200,61 @@ describe("desktop agent app", () => {
     expect(res.status).toBe(200);
     expect((res.body as any).results[0].normalized_tool).toBe("open_app");
     expect((res.body as any).results[0].result.success).toBe(true);
+  });
+
+  it("trash_path requires confirmation for live runs", async () => {
+    const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "aura-p7-app-"));
+    const filePath = path.join(tmpRoot, "trash-me.txt");
+    await writeFile(filePath, "phase7");
+
+    const previousAllowedPaths = process.env.AURA_ALLOWED_PATHS;
+    process.env.AURA_ALLOWED_PATHS = tmpRoot;
+
+    try {
+      const app = createAgentApp({ env });
+      const blocked = await invokeRoute({
+        app,
+        method: "post",
+        path: "/execute",
+        body: {
+          dry_run: false,
+          plan: {
+            goal: "trash without confirmation",
+            questions: [],
+            tool_calls: [{ name: "trash_path", args: { path: filePath } }]
+          }
+        }
+      });
+      expect(blocked.status).toBe(200);
+      expect((blocked.body as any).results[0].result.error).toBe("confirmation_required");
+
+      const allowed = await invokeRoute({
+        app,
+        method: "post",
+        path: "/execute",
+        body: {
+          dry_run: false,
+          plan: {
+            goal: "confirm and trash",
+            questions: [],
+            tool_calls: [
+              { name: "confirm_action", args: { reason: "Delete temp test file safely" } },
+              { name: "trash_path", args: { path: filePath } }
+            ]
+          }
+        }
+      });
+
+      expect(allowed.status).toBe(200);
+      expect((allowed.body as any).results[0].normalized_tool).toBe("confirm_action");
+      expect((allowed.body as any).results[1].normalized_tool).toBe("trash_path");
+      expect((allowed.body as any).results[1].result.success).toBe(true);
+      await expect(access(filePath)).rejects.toThrow();
+    } finally {
+      if (previousAllowedPaths === undefined) delete process.env.AURA_ALLOWED_PATHS;
+      else process.env.AURA_ALLOWED_PATHS = previousAllowedPaths;
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 
   it("run rejects invalid requests before planner call", async () => {

@@ -116,7 +116,13 @@ const env: Env = {
   WHISPER_NO_GPU: true,
   WHISPER_TIMEOUT_MS: 120000,
   AURA_STT_MIN_WORDS: 2,
-  AURA_STT_MIN_CHARS: 8
+  AURA_STT_MIN_CHARS: 8,
+  AURA_BROWSER_MODE: "http",
+  AURA_BROWSER_TIMEOUT_MS: 15000,
+  AURA_BROWSER_HEADLESS: true,
+  AURA_ALLOWED_PATHS: undefined,
+  AURA_SEARCH_MAX_SCAN: 5000,
+  AURA_AUDIO_PLAYER_CMD: undefined
 };
 
 describe("voice transcript heuristics", () => {
@@ -236,5 +242,46 @@ describe("voice routes", () => {
     });
     expect(stop.status).toBe(200);
     expect((stop.body as any).bytes).toBe(2048);
+  });
+
+  it("respond route fetches backend tts, writes audio, and can play", async () => {
+    let ttsCalled = false;
+    let playCalled = false;
+    const app = createAgentApp({
+      env,
+      deps: {
+        backendTts: async ({ text }) => {
+          ttsCalled = true;
+          expect(text).toBe("Acknowledged.");
+          return {
+            audio: Uint8Array.from([1, 2, 3, 4]).buffer,
+            contentType: "audio/mpeg"
+          };
+        },
+        writeAudioFile: async ({ contentType }) => {
+          expect(contentType).toBe("audio/mpeg");
+          return {
+            audioPath: "/tmp/aura-test-response.mp3",
+            bytes: 4
+          };
+        },
+        playAudioFile: async ({ audioPath }) => {
+          playCalled = true;
+          expect(audioPath).toBe("/tmp/aura-test-response.mp3");
+        }
+      }
+    });
+
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/voice/respond",
+      body: { text: "Acknowledged.", speak: true }
+    });
+    expect(res.status).toBe(200);
+    expect(ttsCalled).toBe(true);
+    expect(playCalled).toBe(true);
+    expect((res.body as any).audio_path).toBe("/tmp/aura-test-response.mp3");
+    expect((res.body as any).played).toBe(true);
   });
 });

@@ -37,7 +37,19 @@ const envSchema = z.object({
 
   // STT quality heuristics
   AURA_STT_MIN_WORDS: z.coerce.number().int().positive().default(2),
-  AURA_STT_MIN_CHARS: z.coerce.number().int().positive().default(8)
+  AURA_STT_MIN_CHARS: z.coerce.number().int().positive().default(8),
+
+  // Browser automation
+  AURA_BROWSER_MODE: z.enum(["http", "playwright"]).default("http"),
+  AURA_BROWSER_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+  AURA_BROWSER_HEADLESS: optionalBoolean(true),
+
+  // Filesystem tool safety
+  AURA_ALLOWED_PATHS: optionalString(1),
+  AURA_SEARCH_MAX_SCAN: z.coerce.number().int().positive().default(5000),
+
+  // Local audio playback
+  AURA_AUDIO_PLAYER_CMD: optionalString(1)
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -25,6 +25,12 @@
     "test:phase3:completion": "node scripts/p3-completion.mjs",
     "test:phase4:completion": "node scripts/p4-completion.mjs",
     "test:phase4:integration": "node scripts/p4-integration.mjs",
+    "test:phase5:smoke": "node scripts/p5-smoke.mjs",
+    "test:phase5:integration": "node scripts/p5-integration.mjs",
+    "test:phase6:completion": "node scripts/p6-completion.mjs",
+    "test:phase6:integration": "node scripts/p6-integration.mjs",
+    "test:phase7:completion": "node scripts/p7-completion.mjs",
+    "test:phase7:integration": "node scripts/p7-integration.mjs",
     "test": "npm --workspaces run test",
     "lint": "npm --workspaces run lint",
     "typecheck": "npm --workspaces run typecheck"

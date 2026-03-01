@@ -1,11 +1,12 @@
 import express from "express";
 import type { Env } from "./env.js";
-import { backendPlan } from "./backendClient.js";
+import { backendPlan, backendTts } from "./backendClient.js";
 import {
   actionPlanSchema,
   executeRequestSchema,
   runRequestSchema,
   voicePttStartRequestSchema,
+  voiceRespondRequestSchema,
   voicePttStopRequestSchema,
   voiceRunRequestSchema,
   voiceTranscribeRequestSchema,
@@ -18,14 +19,19 @@ import { appendAuditLog, ensureRequestId } from "./logging.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
 import { startPushToTalkCapture, type PushToTalkCapture } from "./ptt.js";
 import { transcribeAudio, type WhisperTranscriber } from "./voice.js";
+import { playAudioFile, writeAudioFile } from "./audio.js";
 
 type AuraRequest = express.Request & { aura_request_id?: string };
 type BackendPlanFn = typeof backendPlan;
+type BackendTtsFn = typeof backendTts;
 
 type AgentDependencies = {
   backendPlan?: BackendPlanFn;
+  backendTts?: BackendTtsFn;
   whisperTranscribe?: WhisperTranscriber;
   startPushToTalkCapture?: typeof startPushToTalkCapture;
+  writeAudioFile?: typeof writeAudioFile;
+  playAudioFile?: typeof playAudioFile;
 };
 
 function withRequestId(req: AuraRequest, res: express.Response, next: express.NextFunction): void {
@@ -123,14 +129,23 @@ function classifyVoiceError(error: unknown): { status: number; message: string }
   if (message.includes("capture_failed")) {
     return { status: 422, message };
   }
+  if (message.includes("audio_player_not_configured")) {
+    return { status: 500, message: "audio_player_not_configured" };
+  }
+  if (message.includes("backend /tts failed")) {
+    return { status: 502, message: "tts_failed" };
+  }
   return { status: 500, message };
 }
 
 export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): express.Express {
   const app = express();
   const planner = args.deps?.backendPlan ?? backendPlan;
+  const ttsClient = args.deps?.backendTts ?? backendTts;
   const whisperTranscriber = args.deps?.whisperTranscribe ?? transcribeWithWhisperCpp;
   const pttStarter = args.deps?.startPushToTalkCapture ?? startPushToTalkCapture;
+  const audioWriter = args.deps?.writeAudioFile ?? writeAudioFile;
+  const audioPlayer = args.deps?.playAudioFile ?? playAudioFile;
 
   app.disable("x-powered-by");
   app.use((req, res, next) => {
@@ -468,6 +483,73 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       plan,
       results
     });
+  });
+
+  app.post("/voice/respond", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = voiceRespondRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_respond_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    try {
+      const tts = await ttsClient({
+        env: args.env,
+        text: parsed.data.text,
+        voiceId: parsed.data.voice_id
+      });
+      const written = await audioWriter({
+        audio: tts.audio,
+        contentType: tts.contentType,
+        outputPath: parsed.data.output_path
+      });
+
+      let played = false;
+      if (parsed.data.speak) {
+        await audioPlayer({
+          audioPath: written.audioPath,
+          playerCommand: args.env.AURA_AUDIO_PLAYER_CMD
+        });
+        played = true;
+      }
+
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_respond_completed",
+        data: {
+          text_chars: parsed.data.text.length,
+          audio_path: written.audioPath,
+          audio_bytes: written.bytes,
+          content_type: tts.contentType,
+          played
+        }
+      });
+
+      return res.json({
+        ok: true,
+        request_id: requestId,
+        audio_path: written.audioPath,
+        audio_bytes: written.bytes,
+        content_type: tts.contentType,
+        played
+      });
+    } catch (error) {
+      const classified = classifyVoiceError(error);
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_respond_failed",
+        data: { error: classified.message }
+      });
+      return res.status(classified.status).json({ error: classified.message });
+    }
   });
 
   app.post("/execute", async (req, res) => {

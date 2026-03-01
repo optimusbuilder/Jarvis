@@ -31,10 +31,15 @@ For local STT (optional until the voice loop exists):
 - `WHISPER_MODEL_PATH`
 - `WHISPER_NO_GPU=true` (recommended on laptops to avoid Metal allocation failures)
 - `WHISPER_DEFAULT_LANGUAGE=en`
+- `AURA_AUDIO_PLAYER_CMD=afplay` (optional; used when `speak=true`)
 
 If you want the desktop agent to call the backend, set:
 - `AURA_BACKEND_URL` (local: `http://127.0.0.1:8080`)
 - `AURA_BACKEND_AUTH_TOKEN` (optional; must match backend if set)
+- `AURA_BROWSER_MODE=http` (deterministic local fixture mode; optional `playwright` for live browser automation)
+- `AURA_BROWSER_TIMEOUT_MS=15000`
+- `AURA_ALLOWED_PATHS=/tmp,/Users/<you>/Documents` (optional allowlist for file tools like `create_folder`, `move_path`, `trash_path`)
+- `AURA_SEARCH_MAX_SCAN=5000` (optional max entries scanned by `search_files`)
 
 Note: `desktop/` and `backend/` will automatically load `.env` from the repo root (or from the workspace directory) during local development.
 
@@ -127,4 +132,24 @@ curl -X POST http://127.0.0.1:8765/voice/run \
   -H "Content-Type: application/json" \
   -H "x-request-id: local-voice-run-1" \
   -d '{"audio_path":"'"$(pwd)"'/speech.mp3","language":"en","dry_run":true}'
+```
+
+Generate TTS audio via backend and return local file path:
+
+```bash
+curl -X POST http://127.0.0.1:8765/voice/respond \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Acknowledged. I opened Chrome.","speak":false}'
+```
+
+Run deterministic browser automation flow against local fixture:
+
+```bash
+npm run test:phase6:completion
+```
+
+Run filesystem safety workflow (create/rename/move/trash with confirmation):
+
+```bash
+npm run test:phase7:completion
 ```

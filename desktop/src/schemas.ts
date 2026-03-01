@@ -48,6 +48,13 @@ export const voicePttStopRequestSchema = z.object({
   capture_id: z.string().min(1).optional()
 });
 
+export const voiceRespondRequestSchema = z.object({
+  text: z.string().min(1).max(1000),
+  voice_id: z.string().min(1).optional(),
+  speak: z.boolean().default(false),
+  output_path: z.string().min(1).optional()
+});
+
 export const toolResultSchema = z.object({
   success: z.boolean(),
   observed_state: z.string().min(1),

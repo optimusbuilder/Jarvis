@@ -1,6 +1,22 @@
 import { z } from "zod";
 import { openApp, openPath, openUrl, getFrontmostAppName } from "./macos.js";
 import type { ToolCall, ToolResult } from "./schemas.js";
+import {
+  browserClickResult,
+  browserClickText,
+  browserExtractText,
+  browserGo,
+  browserNewTab,
+  browserSearch,
+  browserTypeActive
+} from "./browserController.js";
+import {
+  createFolder,
+  movePath,
+  renamePath,
+  searchFiles,
+  trashPath
+} from "./systemController.js";
 
 type ToolHandler = (args: Record<string, unknown>, opts: { dryRun: boolean }) => Promise<ToolResult>;
 
@@ -39,6 +55,28 @@ function withVerifiedObservedState(toolName: string, result: ToolResult): ToolRe
 const openAppArgs = z.object({ name: z.string().min(1) });
 const openPathArgs = z.object({ path: z.string().min(1) });
 const openUrlArgs = z.object({ url: z.string().url() });
+const searchFilesArgs = z.object({
+  query: z.string().min(1).max(200),
+  limit: z.coerce.number().int().positive().max(50).optional()
+});
+const createFolderArgs = z.object({ path: z.string().min(1) });
+const renamePathArgs = z.object({
+  path: z.string().min(1),
+  new_name: z.string().min(1).max(255)
+});
+const movePathArgs = z.object({
+  path: z.string().min(1),
+  destination_dir: z.string().min(1)
+});
+const trashPathArgs = z.object({ path: z.string().min(1) });
+const confirmActionArgs = z.object({
+  reason: z.string().min(3).max(300)
+});
+const browserGoArgs = z.object({ url: z.string().url() });
+const browserSearchArgs = z.object({ query: z.string().min(1).max(500) });
+const browserClickResultArgs = z.object({ index: z.coerce.number().int().positive() });
+const browserClickTextArgs = z.object({ text: z.string().min(1).max(500) });
+const browserTypeActiveArgs = z.object({ text: z.string().min(1).max(2000) });
 
 export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
   open_app: {
@@ -64,6 +102,128 @@ export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
       required: ["url"],
       properties: { url: { type: "string", format: "uri" } }
     }
+  },
+  search_files: {
+    description: "Search allowed filesystem roots for names matching a query.",
+    args_schema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", minLength: 1 },
+        limit: { type: "integer", minimum: 1, maximum: 50 }
+      }
+    }
+  },
+  create_folder: {
+    description: "Create a folder path inside allowed filesystem roots.",
+    args_schema: {
+      type: "object",
+      required: ["path"],
+      properties: { path: { type: "string", minLength: 1 } }
+    }
+  },
+  rename_path: {
+    description: "Rename a file or folder by new basename.",
+    args_schema: {
+      type: "object",
+      required: ["path", "new_name"],
+      properties: {
+        path: { type: "string", minLength: 1 },
+        new_name: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  move_path: {
+    description: "Move a file/folder into a destination directory.",
+    args_schema: {
+      type: "object",
+      required: ["path", "destination_dir"],
+      properties: {
+        path: { type: "string", minLength: 1 },
+        destination_dir: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  trash_path: {
+    description: "Move a file/folder to trash. Requires confirm_action first.",
+    args_schema: {
+      type: "object",
+      required: ["path"],
+      properties: {
+        path: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  confirm_action: {
+    description: "Grant one-time confirmation for the next destructive action.",
+    args_schema: {
+      type: "object",
+      required: ["reason"],
+      properties: {
+        reason: { type: "string", minLength: 3 }
+      }
+    }
+  },
+  browser_new_tab: {
+    description: "Open a new browser tab in the automation controller.",
+    args_schema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  browser_go: {
+    description: "Navigate active automation tab to a URL and verify page readiness.",
+    args_schema: {
+      type: "object",
+      required: ["url"],
+      properties: { url: { type: "string", format: "uri" } }
+    }
+  },
+  browser_search: {
+    description: "Submit a search query in the current page context.",
+    args_schema: {
+      type: "object",
+      required: ["query"],
+      properties: { query: { type: "string", minLength: 1 } }
+    }
+  },
+  browser_click_result: {
+    description: "Click a search result link by 1-based index.",
+    args_schema: {
+      type: "object",
+      required: ["index"],
+      properties: { index: { type: "integer", minimum: 1 } }
+    }
+  },
+  browser_extract_text: {
+    description: "Extract visible text from current page with verification summary.",
+    args_schema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  browser_click_text: {
+    description: "Click the first clickable element containing the provided text.",
+    args_schema: {
+      type: "object",
+      required: ["text"],
+      properties: { text: { type: "string", minLength: 1 } }
+    }
+  },
+  browser_type_active: {
+    description: "Type text into the currently focused element in automation context.",
+    args_schema: {
+      type: "object",
+      required: ["text"],
+      properties: { text: { type: "string", minLength: 1 } }
+    }
+  },
+  browser_extract_visible_text: {
+    description: "Alias for browser_extract_text.",
+    args_schema: {
+      type: "object",
+      properties: {}
+    }
   }
 };
 
@@ -74,7 +234,19 @@ const toolNameAliases: Record<string, string> = {
   open_file: "open_path",
   navigate_url: "open_url",
   open_website: "open_url",
-  browser_go: "open_url"
+  file_search: "search_files",
+  find_files: "search_files",
+  create_directory: "create_folder",
+  make_folder: "create_folder",
+  rename_file: "rename_path",
+  rename_folder: "rename_path",
+  move_file: "move_path",
+  move_folder: "move_path",
+  delete_file: "trash_path",
+  delete_path: "trash_path",
+  confirm_destructive_action: "confirm_action",
+  click_result: "browser_click_result",
+  browser_extract_visible_text: "browser_extract_text"
 };
 
 function normalizeToolCall(call: ToolCall): ToolCall {
@@ -101,7 +273,34 @@ function normalizeToolCall(call: ToolCall): ToolCall {
     if (alias && !args.url) args.url = alias;
   }
 
+  if (mappedName === "rename_path") {
+    const alias =
+      (typeof args.newName === "string" && args.newName) ||
+      (typeof args.name === "string" && args.name);
+    if (alias && !args.new_name) args.new_name = alias;
+  }
+
+  if (mappedName === "move_path") {
+    const alias =
+      (typeof args.destination === "string" && args.destination) ||
+      (typeof args.target_dir === "string" && args.target_dir);
+    if (alias && !args.destination_dir) args.destination_dir = alias;
+  }
+
   return { name: mappedName, args };
+}
+
+const CONFIRMATION_TTL_MS = 120000;
+let destructiveConfirmationExpiresAt = 0;
+
+function grantDestructiveConfirmation(): void {
+  destructiveConfirmationExpiresAt = Date.now() + CONFIRMATION_TTL_MS;
+}
+
+function consumeDestructiveConfirmation(): boolean {
+  if (Date.now() > destructiveConfirmationExpiresAt) return false;
+  destructiveConfirmationExpiresAt = 0;
+  return true;
 }
 
 export const toolRegistry: Record<string, ToolHandler> = {
@@ -143,6 +342,230 @@ export const toolRegistry: Record<string, ToolHandler> = {
     if (opts.dryRun) return ok(`dry_run: would open url '${parsed.data.url}'`);
     await openUrl(parsed.data.url);
     return ok(`opened url '${parsed.data.url}'`);
+  },
+
+  async search_files(args, opts) {
+    const parsed = searchFilesArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for search_files",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would search files query='${parsed.data.query}'`);
+    try {
+      const result = await searchFiles({
+        query: parsed.data.query,
+        limit: parsed.data.limit ?? 10
+      });
+      const sample = result.matches.slice(0, 3).join(" | ") || "none";
+      return ok(
+        `search_files_ok: query='${result.query}' matches=${result.matches.length} scanned=${result.scanned} sample=${sample}`
+      );
+    } catch (error) {
+      return fail({
+        observedState: `search_files_failed: query='${parsed.data.query}'`,
+        error
+      });
+    }
+  },
+
+  async create_folder(args, opts) {
+    const parsed = createFolderArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for create_folder",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would create folder '${parsed.data.path}'`);
+    try {
+      const created = await createFolder(parsed.data.path);
+      return ok(`create_folder_ok: path='${created.path}'`);
+    } catch (error) {
+      return fail({
+        observedState: `create_folder_failed: path='${parsed.data.path}'`,
+        error
+      });
+    }
+  },
+
+  async rename_path(args, opts) {
+    const parsed = renamePathArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for rename_path",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would rename path '${parsed.data.path}' to '${parsed.data.new_name}'`);
+    try {
+      const renamed = await renamePath({ path: parsed.data.path, newName: parsed.data.new_name });
+      return ok(`rename_path_ok: from='${renamed.from}' to='${renamed.to}'`);
+    } catch (error) {
+      return fail({
+        observedState: `rename_path_failed: path='${parsed.data.path}'`,
+        error
+      });
+    }
+  },
+
+  async move_path(args, opts) {
+    const parsed = movePathArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for move_path",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) {
+      return ok(`dry_run: would move '${parsed.data.path}' to '${parsed.data.destination_dir}'`);
+    }
+    try {
+      const moved = await movePath({
+        path: parsed.data.path,
+        destinationDir: parsed.data.destination_dir
+      });
+      return ok(`move_path_ok: from='${moved.from}' to='${moved.to}'`);
+    } catch (error) {
+      return fail({
+        observedState: `move_path_failed: path='${parsed.data.path}'`,
+        error
+      });
+    }
+  },
+
+  async trash_path(args, opts) {
+    const parsed = trashPathArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for trash_path",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) {
+      return ok(`dry_run: would trash path '${parsed.data.path}' (requires confirm_action for live runs)`);
+    }
+    if (!consumeDestructiveConfirmation()) {
+      return fail({
+        observedState: "blocked: confirmation_required for trash_path; call confirm_action first",
+        error: "confirmation_required"
+      });
+    }
+    try {
+      const trashed = await trashPath(parsed.data.path);
+      return ok(`trash_path_ok: from='${trashed.from}' to='${trashed.to}'`);
+    } catch (error) {
+      return fail({
+        observedState: `trash_path_failed: path='${parsed.data.path}'`,
+        error
+      });
+    }
+  },
+
+  async confirm_action(args, _opts) {
+    const parsed = confirmActionArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for confirm_action",
+        error: "invalid_args"
+      });
+    }
+    grantDestructiveConfirmation();
+    return ok(`confirmation_granted: ttl_ms=${CONFIRMATION_TTL_MS} reason='${parsed.data.reason}'`);
+  },
+
+  async browser_new_tab(_args, opts) {
+    if (opts.dryRun) return ok("dry_run: would open browser automation tab");
+    const out = await browserNewTab();
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "browser_new_tab_failed" });
+    return ok(out.observed_state);
+  },
+
+  async browser_go(args, opts) {
+    const parsed = browserGoArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for browser_go",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would navigate browser to '${parsed.data.url}'`);
+    const out = await browserGo(parsed.data.url);
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "browser_go_failed" });
+    return ok(out.observed_state);
+  },
+
+  async browser_search(args, opts) {
+    const parsed = browserSearchArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for browser_search",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would search '${parsed.data.query}'`);
+    const out = await browserSearch(parsed.data.query);
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "browser_search_failed" });
+    return ok(out.observed_state);
+  },
+
+  async browser_click_result(args, opts) {
+    const parsed = browserClickResultArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for browser_click_result",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would click result index=${parsed.data.index}`);
+    const out = await browserClickResult(parsed.data.index);
+    if (!out.success) {
+      return fail({
+        observedState: out.observed_state,
+        error: out.error ?? "browser_click_result_failed"
+      });
+    }
+    return ok(out.observed_state);
+  },
+
+  async browser_extract_text(_args, opts) {
+    if (opts.dryRun) return ok("dry_run: would extract browser text");
+    const out = await browserExtractText();
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "browser_extract_text_failed" });
+    return ok(out.observed_state);
+  },
+
+  async browser_click_text(args, opts) {
+    const parsed = browserClickTextArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for browser_click_text",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would click text '${parsed.data.text}'`);
+    const out = await browserClickText(parsed.data.text);
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "browser_click_text_failed" });
+    return ok(out.observed_state);
+  },
+
+  async browser_type_active(args, opts) {
+    const parsed = browserTypeActiveArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for browser_type_active",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would type ${parsed.data.text.length} chars into active field`);
+    const out = await browserTypeActive(parsed.data.text);
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "browser_type_active_failed" });
+    return ok(out.observed_state);
+  },
+
+  async browser_extract_visible_text(args, opts) {
+    return toolRegistry.browser_extract_text(args, opts);
   }
 };
 
