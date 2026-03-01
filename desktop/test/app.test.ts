@@ -7,6 +7,7 @@ type RouteMethod = "get" | "post";
 type InvokeResult = {
   status: number;
   body: unknown;
+  headers: Record<string, string>;
 };
 
 async function invokeRoute(args: {
@@ -41,7 +42,7 @@ async function invokeRoute(args: {
     }
   };
 
-  const out: InvokeResult = { status: 200, body: null };
+  const out: InvokeResult = { status: 200, body: null, headers: {} };
   let sent = false;
 
   const res: any = {
@@ -58,6 +59,9 @@ async function invokeRoute(args: {
       out.body = payload;
       sent = true;
       return this;
+    },
+    setHeader(name: string, value: string) {
+      out.headers[name.toLowerCase()] = value;
     }
   };
 
@@ -98,6 +102,8 @@ async function invokeRoute(args: {
 
 const env: Env = {
   PORT: 8765,
+  AURA_AGENT_VERSION: "test",
+  AURA_AUDIT_LOG_PATH: "logs/test-agent.audit.log",
   AURA_BACKEND_URL: "http://127.0.0.1:8080",
   AURA_BACKEND_AUTH_TOKEN: "x".repeat(32),
   WHISPER_CPP_BIN: "whisper-cli"
@@ -116,6 +122,7 @@ describe("desktop agent app", () => {
     const res = await invokeRoute({ app, method: "get", path: "/tools" });
     expect(res.status).toBe(200);
     expect(Array.isArray((res.body as any).tools)).toBe(true);
+    expect((res.body as any).schemas.open_app).toBeTruthy();
   });
 
   it("execute blocks unknown tools", async () => {
@@ -131,5 +138,62 @@ describe("desktop agent app", () => {
     });
     expect(res.status).toBe(200);
     expect((res.body as any).results[0].result.error).toBe("tool_not_allowed");
+    expect((res.body as any).results[0].result.observed_state).toContain("blocked");
+    expect(res.headers["x-request-id"]).toBeTruthy();
+  });
+
+  it("execute accepts known safe tool in dry run", async () => {
+    const app = createAgentApp({ env });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/execute",
+      headers: { "x-request-id": "desktop-p2-test" },
+      body: {
+        dry_run: true,
+        plan: {
+          goal: "open chrome",
+          questions: [],
+          tool_calls: [{ name: "open_app", args: { name: "Google Chrome" } }]
+        }
+      }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).request_id).toBe("desktop-p2-test");
+    expect((res.body as any).results[0].result.success).toBe(true);
+    expect((res.body as any).results[0].result.observed_state).toContain("dry_run");
+  });
+
+  it("execute normalizes compatible tool aliases", async () => {
+    const app = createAgentApp({ env });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/execute",
+      body: {
+        dry_run: true,
+        plan: {
+          goal: "open chrome",
+          questions: [],
+          tool_calls: [{ name: "open_application", args: { app_name: "Google Chrome" } }]
+        }
+      }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).results[0].normalized_tool).toBe("open_app");
+    expect((res.body as any).results[0].result.success).toBe(true);
+  });
+
+  it("run rejects invalid requests before planner call", async () => {
+    const app = createAgentApp({ env });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/run",
+      body: { dry_run: true }
+    });
+    expect(res.status).toBe(400);
+    expect((res.body as any).error).toBe("invalid_request");
+    expect(res.headers["x-request-id"]).toBeTruthy();
   });
 });

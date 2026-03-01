@@ -19,6 +19,8 @@
     "test:phase0": "make test-phase0",
     "ci:phase0": "make ci-phase0",
     "test:phase1:smoke": "node scripts/p1-smoke.mjs",
+    "test:phase2:completion": "node scripts/p2-completion.mjs",
+    "test:phase2:integration": "node scripts/p2-integration.mjs",
     "test": "npm --workspaces run test",
     "lint": "npm --workspaces run lint",
     "typecheck": "npm --workspaces run typecheck"

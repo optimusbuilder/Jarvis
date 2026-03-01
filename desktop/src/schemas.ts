@@ -16,11 +16,18 @@ export const executeRequestSchema = z.object({
   plan: actionPlanSchema
 });
 
+export const runRequestSchema = z.object({
+  instruction: z.string().min(1).max(2000),
+  dry_run: z.boolean().default(true),
+  context_snapshot: z.unknown().optional()
+});
+
 export const toolResultSchema = z.object({
   success: z.boolean(),
-  observed_state: z.string(),
+  observed_state: z.string().min(1),
   error: z.string().nullable().default(null)
 });
 
 export type ToolResult = z.infer<typeof toolResultSchema>;
-
+export type ToolCall = z.infer<typeof toolCallSchema>;
+export type ActionPlan = z.infer<typeof actionPlanSchema>;

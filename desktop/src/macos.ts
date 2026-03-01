@@ -3,6 +3,11 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+export type PermissionStatus = {
+  accessibility: boolean | null;
+  platform_supported: boolean;
+};
+
 export async function getFrontmostAppName(): Promise<string | null> {
   if (process.platform !== "darwin") return null;
   try {
@@ -14,6 +19,32 @@ export async function getFrontmostAppName(): Promise<string | null> {
     return name.length ? name : null;
   } catch {
     return null;
+  }
+}
+
+export async function getPermissionStatus(): Promise<PermissionStatus> {
+  if (process.platform !== "darwin") {
+    return {
+      accessibility: null,
+      platform_supported: false
+    };
+  }
+
+  try {
+    const { stdout } = await execFileAsync("osascript", [
+      "-e",
+      'tell application "System Events" to UI elements enabled'
+    ]);
+    const value = stdout.trim().toLowerCase();
+    return {
+      accessibility: value === "true",
+      platform_supported: true
+    };
+  } catch {
+    return {
+      accessibility: false,
+      platform_supported: true
+    };
   }
 }
 

@@ -10,11 +10,13 @@ export async function backendPlan(args: {
   instruction: string;
   desktopState?: unknown;
   contextSnapshot?: unknown;
-}): Promise<unknown> {
+  requestId?: string;
+}): Promise<{ payload: unknown; requestId: string | null }> {
   const res = await fetch(new URL("/plan", args.env.AURA_BACKEND_URL), {
     method: "POST",
     headers: {
       ...authHeaders(args.env),
+      ...(args.requestId ? { "x-request-id": args.requestId } : {}),
       "content-type": "application/json"
     },
     body: JSON.stringify({
@@ -28,7 +30,10 @@ export async function backendPlan(args: {
     const text = await res.text().catch(() => "");
     throw new Error(`backend /plan failed: ${res.status} ${text}`);
   }
-  return res.json();
+  return {
+    payload: await res.json(),
+    requestId: res.headers.get("x-request-id")
+  };
 }
 
 export async function backendTts(args: { env: Env; text: string }): Promise<ArrayBuffer> {

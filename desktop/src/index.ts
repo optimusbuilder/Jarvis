@@ -9,5 +9,7 @@ const app = createAgentApp({ env });
 
 app.listen(env.PORT, "127.0.0.1", () => {
   // eslint-disable-next-line no-console
-  console.log(`aura-desktop-agent listening on http://127.0.0.1:${env.PORT}`);
+  console.log(
+    `aura-desktop-agent listening on http://127.0.0.1:${env.PORT} (version=${env.AURA_AGENT_VERSION}, audit_log=${env.AURA_AUDIT_LOG_PATH})`
+  );
 });

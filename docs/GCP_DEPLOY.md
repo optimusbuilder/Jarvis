@@ -66,6 +66,11 @@ curl -i "$AURA_BACKEND_URL/plan" \
   -H "Authorization: Bearer $AURA_BACKEND_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"instruction":"Open Chrome","desktop_state":{"os":"macos","frontmost_app":"Finder"}}'
+
+curl -i "$AURA_BACKEND_URL/copilot" \
+  -H "Authorization: Bearer $AURA_BACKEND_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 ## 4) Proof of GCP deployment

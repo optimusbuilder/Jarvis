@@ -24,6 +24,7 @@ cp .env.example .env
 For local-only development, keep:
 - `AURA_PLANNER_MODE=local`
 - `AURA_TTS_MODE=stub`
+- `AURA_AUDIT_LOG_PATH=logs/desktop-agent.audit.log` (default)
 
 For local STT (optional until the voice loop exists):
 - `WHISPER_CPP_BIN` (usually `whisper-cli`)
@@ -46,6 +47,7 @@ Verify:
 ```bash
 curl http://127.0.0.1:8765/status
 curl http://127.0.0.1:8765/tools
+curl -X POST http://127.0.0.1:8765/execute -H "Content-Type: application/json" -d '{"dry_run":true,"plan":{"goal":"Open Chrome","questions":[],"tool_calls":[{"name":"open_app","args":{"name":"Google Chrome"}}]}}'
 ```
 
 ## 3b) Run the backend locally (local planner + stub TTS)
@@ -79,3 +81,14 @@ curl http://127.0.0.1:8765/snapshot
 ```
 
 Visit any webpage and re-run the curl; `snapshot` should change over time.
+
+## 5) Run instruction loop (desktop → backend → execute)
+
+```bash
+curl -X POST http://127.0.0.1:8765/run \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: local-run-1" \
+  -d '{"instruction":"Open Chrome","dry_run":true}'
+```
+
+Audit log is written to `AURA_AUDIT_LOG_PATH` (default: `logs/desktop-agent.audit.log`).
