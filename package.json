@@ -23,6 +23,8 @@
     "test:phase2:integration": "node scripts/p2-integration.mjs",
     "test:phase3:unit": "npm -w extension run test",
     "test:phase3:completion": "node scripts/p3-completion.mjs",
+    "test:phase4:completion": "node scripts/p4-completion.mjs",
+    "test:phase4:integration": "node scripts/p4-integration.mjs",
     "test": "npm --workspaces run test",
     "lint": "npm --workspaces run lint",
     "typecheck": "npm --workspaces run typecheck"

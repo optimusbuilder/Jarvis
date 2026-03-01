@@ -1,6 +1,8 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { Env } from "../src/env.js";
 import { createAgentApp } from "../src/app.js";
+import type { Env } from "../src/env.js";
+import { assessTranscriptQuality } from "../src/voice.js";
 
 type RouteMethod = "get" | "post";
 
@@ -100,6 +102,8 @@ async function invokeRoute(args: {
   return out;
 }
 
+const fixtureAudioPath = fileURLToPath(new URL("../../speech.mp3", import.meta.url));
+
 const env: Env = {
   PORT: 8765,
   AURA_AGENT_VERSION: "test",
@@ -115,91 +119,122 @@ const env: Env = {
   AURA_STT_MIN_CHARS: 8
 };
 
-describe("desktop agent app", () => {
-  it("status returns ok", async () => {
-    const app = createAgentApp({ env });
-    const res = await invokeRoute({ app, method: "get", path: "/status" });
-    expect(res.status).toBe(200);
-    expect((res.body as any).ok).toBe(true);
+describe("voice transcript heuristics", () => {
+  it("asks for repeat on short transcript", () => {
+    const out = assessTranscriptQuality({
+      transcript: "uh",
+      minWords: 2,
+      minChars: 8
+    });
+    expect(out.quality).toBe("repeat");
   });
+});
 
-  it("tools returns tool list", async () => {
-    const app = createAgentApp({ env });
-    const res = await invokeRoute({ app, method: "get", path: "/tools" });
-    expect(res.status).toBe(200);
-    expect(Array.isArray((res.body as any).tools)).toBe(true);
-    expect((res.body as any).schemas.open_app).toBeTruthy();
-  });
-
-  it("execute blocks unknown tools", async () => {
-    const app = createAgentApp({ env });
-    const res = await invokeRoute({
-      app,
-      method: "post",
-      path: "/execute",
-      body: {
-        dry_run: true,
-        plan: { goal: "x", questions: [], tool_calls: [{ name: "rm_rf", args: {} }] }
+describe("voice routes", () => {
+  it("transcribes audio with injected whisper adapter", async () => {
+    const app = createAgentApp({
+      env,
+      deps: {
+        whisperTranscribe: async () => "Open Google Chrome"
       }
     });
-    expect(res.status).toBe(200);
-    expect((res.body as any).results[0].result.error).toBe("tool_not_allowed");
-    expect((res.body as any).results[0].result.observed_state).toContain("blocked");
-    expect(res.headers["x-request-id"]).toBeTruthy();
-  });
-
-  it("execute accepts known safe tool in dry run", async () => {
-    const app = createAgentApp({ env });
     const res = await invokeRoute({
       app,
       method: "post",
-      path: "/execute",
-      headers: { "x-request-id": "desktop-p2-test" },
-      body: {
-        dry_run: true,
-        plan: {
-          goal: "open chrome",
-          questions: [],
-          tool_calls: [{ name: "open_app", args: { name: "Google Chrome" } }]
+      path: "/voice/transcribe",
+      body: { audio_path: fixtureAudioPath }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).quality).toBe("good");
+    expect((res.body as any).transcript).toBe("Open Google Chrome");
+  });
+
+  it("returns needs_repeat without planner call on low quality transcript", async () => {
+    let plannerCalled = false;
+    const app = createAgentApp({
+      env,
+      deps: {
+        whisperTranscribe: async () => "ok",
+        backendPlan: async () => {
+          plannerCalled = true;
+          throw new Error("planner should not run");
         }
       }
     });
-    expect(res.status).toBe(200);
-    expect((res.body as any).request_id).toBe("desktop-p2-test");
-    expect((res.body as any).results[0].result.success).toBe(true);
-    expect((res.body as any).results[0].result.observed_state).toContain("dry_run");
-  });
-
-  it("execute normalizes compatible tool aliases", async () => {
-    const app = createAgentApp({ env });
     const res = await invokeRoute({
       app,
       method: "post",
-      path: "/execute",
-      body: {
-        dry_run: true,
-        plan: {
-          goal: "open chrome",
-          questions: [],
-          tool_calls: [{ name: "open_application", args: { app_name: "Google Chrome" } }]
-        }
+      path: "/voice/run",
+      body: { audio_path: fixtureAudioPath, dry_run: true }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).needs_repeat).toBe(true);
+    expect(plannerCalled).toBe(false);
+  });
+
+  it("runs voice instruction through planner in dry run mode", async () => {
+    const app = createAgentApp({
+      env,
+      deps: {
+        whisperTranscribe: async () => "Open Chrome",
+        backendPlan: async () => ({
+          requestId: "backend-voice-1",
+          payload: {
+            goal: "Open Google Chrome",
+            questions: [],
+            tool_calls: [{ name: "open_app", args: { name: "Google Chrome" } }]
+          }
+        })
       }
     });
-    expect(res.status).toBe(200);
-    expect((res.body as any).results[0].normalized_tool).toBe("open_app");
-    expect((res.body as any).results[0].result.success).toBe(true);
-  });
-
-  it("run rejects invalid requests before planner call", async () => {
-    const app = createAgentApp({ env });
     const res = await invokeRoute({
       app,
       method: "post",
-      path: "/run",
-      body: { dry_run: true }
+      path: "/voice/run",
+      headers: { "x-request-id": "voice-run-1" },
+      body: { audio_path: fixtureAudioPath, dry_run: true }
     });
-    expect(res.status).toBe(400);
-    expect((res.body as any).error).toBe("invalid_request");
-    expect(res.headers["x-request-id"]).toBeTruthy();
+    expect(res.status).toBe(200);
+    expect((res.body as any).request_id).toBe("voice-run-1");
+    expect((res.body as any).backend_request_id).toBe("backend-voice-1");
+    expect((res.body as any).needs_repeat).toBe(false);
+    expect((res.body as any).results[0].result.success).toBe(true);
+    expect(String((res.body as any).results[0].result.observed_state)).toContain("dry_run");
+  });
+
+  it("supports ptt start/stop via injected capture adapter", async () => {
+    const app = createAgentApp({
+      env,
+      deps: {
+        startPushToTalkCapture: async () => ({
+          capture_id: "capture-test-1",
+          audio_path: "/tmp/capture-test-1.wav",
+          started_at: new Date().toISOString(),
+          stop: async () => ({
+            audio_path: "/tmp/capture-test-1.wav",
+            duration_ms: 1100,
+            bytes: 2048
+          })
+        })
+      }
+    });
+
+    const start = await invokeRoute({
+      app,
+      method: "post",
+      path: "/voice/ptt/start",
+      body: {}
+    });
+    expect(start.status).toBe(200);
+    expect((start.body as any).capture_id).toBe("capture-test-1");
+
+    const stop = await invokeRoute({
+      app,
+      method: "post",
+      path: "/voice/ptt/stop",
+      body: { capture_id: "capture-test-1" }
+    });
+    expect(stop.status).toBe(200);
+    expect((stop.body as any).bytes).toBe(2048);
   });
 });

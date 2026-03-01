@@ -195,4 +195,70 @@ describe("backend app", () => {
     expect((res.body as any).questions[0]).toContain("No actions were executed");
     expect(res.headers["x-request-id"]).toBeTruthy();
   });
+
+  it("tts requires auth when token configured", async () => {
+    const app = createApp({
+      env: makeEnv({ AURA_BACKEND_AUTH_TOKEN: "x".repeat(32) }),
+      planner: stubPlanner
+    });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/tts",
+      body: { text: "hello" }
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers["x-request-id"]).toBeTruthy();
+  });
+
+  it("tts returns stub audio when mode is stub", async () => {
+    const app = createApp({
+      env: makeEnv({ AURA_TTS_MODE: "stub" }),
+      planner: stubPlanner
+    });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/tts",
+      body: { text: "hello world" }
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("audio/wav");
+    expect(Buffer.isBuffer(res.body)).toBe(true);
+    expect((res.body as Buffer).byteLength).toBeGreaterThan(100);
+    expect(res.headers["x-request-id"]).toBeTruthy();
+  });
+
+  it("tts returns provider audio when mode is elevenlabs", async () => {
+    let called = false;
+    const app = createApp({
+      env: makeEnv({
+        AURA_TTS_MODE: "elevenlabs",
+        ELEVENLABS_VOICE_ID: "voice-123"
+      }),
+      planner: stubPlanner,
+      deps: {
+        ttsProvider: async ({ voiceId, text }) => {
+          called = true;
+          expect(voiceId).toBe("voice-123");
+          expect(text).toBe("ack now");
+          return {
+            contentType: "audio/mpeg",
+            audio: Buffer.from([1, 2, 3, 4, 5])
+          };
+        }
+      }
+    });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/tts",
+      body: { text: "ack now" }
+    });
+    expect(res.status).toBe(200);
+    expect(called).toBe(true);
+    expect(res.headers["content-type"]).toBe("audio/mpeg");
+    expect(Buffer.isBuffer(res.body)).toBe(true);
+    expect((res.body as Buffer).byteLength).toBe(5);
+  });
 });

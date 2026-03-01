@@ -36,19 +36,29 @@ export async function backendPlan(args: {
   };
 }
 
-export async function backendTts(args: { env: Env; text: string }): Promise<ArrayBuffer> {
+export async function backendTts(args: {
+  env: Env;
+  text: string;
+  voiceId?: string;
+}): Promise<{ audio: ArrayBuffer; contentType: string }> {
   const res = await fetch(new URL("/tts", args.env.AURA_BACKEND_URL), {
     method: "POST",
     headers: {
       ...authHeaders(args.env),
       "content-type": "application/json"
     },
-    body: JSON.stringify({ text: args.text })
+    body: JSON.stringify({
+      text: args.text,
+      voice_id: args.voiceId
+    })
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`backend /tts failed: ${res.status} ${text}`);
   }
-  return res.arrayBuffer();
+  return {
+    audio: await res.arrayBuffer(),
+    contentType: res.headers.get("content-type") ?? "audio/mpeg"
+  };
 }

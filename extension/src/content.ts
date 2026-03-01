@@ -7,6 +7,7 @@ const USER_ACTION_LIMIT = 30;
 
 const userActions: UserAction[] = [];
 const fieldEditCounts = new Map<string, number>();
+let inPageSessionId: string | null = null;
 let lastInteractionAtMs = Date.now();
 let lastBubbleShownAtMs = 0;
 
@@ -98,12 +99,28 @@ function createBubble(): SuggestionBubble {
 }
 
 async function getOrCreateSessionId(): Promise<string> {
-  const existing = await chrome.storage.session.get(["aura_session_id"]);
-  const id = existing.aura_session_id as string | undefined;
-  if (id) return id;
-  const newId = crypto.randomUUID();
-  await chrome.storage.session.set({ aura_session_id: newId });
-  return newId;
+  if (inPageSessionId) return inPageSessionId;
+
+  try {
+    const sessionStore = chrome?.storage?.session;
+    if (sessionStore?.get && sessionStore?.set) {
+      const existing = await sessionStore.get(["aura_session_id"]);
+      const id = existing.aura_session_id as string | undefined;
+      if (id) {
+        inPageSessionId = id;
+        return id;
+      }
+      const newId = crypto.randomUUID();
+      await sessionStore.set({ aura_session_id: newId });
+      inPageSessionId = newId;
+      return newId;
+    }
+  } catch {
+    // storage.session is not always available in content-script contexts.
+  }
+
+  inPageSessionId = crypto.randomUUID();
+  return inPageSessionId;
 }
 
 async function startLoop(): Promise<void> {

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && esbuild src/content.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=dist/content.js && esbuild src/service_worker.ts --bundle --platform=browser --format=esm --target=chrome120 --outfile=dist/service_worker.js",
     "test": "vitest run",
     "test:unit": "vitest run",
     "lint": "echo \"(todo)\"",
@@ -12,6 +12,7 @@
   "devDependencies": {
     "@types/node": "^20.17.19",
     "@types/chrome": "^0.0.268",
+    "esbuild": "^0.25.10",
     "jsdom": "^24.1.3",
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"

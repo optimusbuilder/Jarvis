@@ -29,6 +29,8 @@ For local-only development, keep:
 For local STT (optional until the voice loop exists):
 - `WHISPER_CPP_BIN` (usually `whisper-cli`)
 - `WHISPER_MODEL_PATH`
+- `WHISPER_NO_GPU=true` (recommended on laptops to avoid Metal allocation failures)
+- `WHISPER_DEFAULT_LANGUAGE=en`
 
 If you want the desktop agent to call the backend, set:
 - `AURA_BACKEND_URL` (local: `http://127.0.0.1:8080`)
@@ -99,3 +101,30 @@ curl -X POST http://127.0.0.1:8765/run \
 ```
 
 Audit log is written to `AURA_AUDIT_LOG_PATH` (default: `logs/desktop-agent.audit.log`).
+
+## 6) Run voice loop locally (Phase 4)
+
+With desktop agent running, test offline STT:
+
+```bash
+curl -X POST http://127.0.0.1:8765/voice/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{"audio_path":"'"$(pwd)"'/speech.mp3","language":"en"}'
+```
+
+Push-to-talk capture API (macOS, local):
+
+```bash
+curl -X POST http://127.0.0.1:8765/voice/ptt/start -H "Content-Type: application/json" -d '{}'
+# wait while speaking
+curl -X POST http://127.0.0.1:8765/voice/ptt/stop -H "Content-Type: application/json" -d '{}'
+```
+
+Voice → planner dry-run:
+
+```bash
+curl -X POST http://127.0.0.1:8765/voice/run \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: local-voice-run-1" \
+  -d '{"audio_path":"'"$(pwd)"'/speech.mp3","language":"en","dry_run":true}'
+```

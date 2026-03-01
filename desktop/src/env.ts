@@ -6,6 +6,19 @@ const optionalString = (minLength = 1) =>
     z.string().min(minLength).optional()
   );
 
+const optionalBoolean = (defaultValue: boolean) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return defaultValue;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["1", "true", "yes", "on"].includes(normalized)) return true;
+      if (["0", "false", "no", "off"].includes(normalized)) return false;
+    }
+    return defaultValue;
+  }, z.boolean());
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8765),
   AURA_AGENT_VERSION: z.string().min(1).default("0.2.0"),
@@ -17,7 +30,14 @@ const envSchema = z.object({
 
   // whisper.cpp
   WHISPER_CPP_BIN: z.string().min(1).default("whisper-cli"),
-  WHISPER_MODEL_PATH: optionalString(1)
+  WHISPER_MODEL_PATH: optionalString(1),
+  WHISPER_DEFAULT_LANGUAGE: z.string().min(2).max(12).default("en"),
+  WHISPER_NO_GPU: optionalBoolean(true),
+  WHISPER_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+
+  // STT quality heuristics
+  AURA_STT_MIN_WORDS: z.coerce.number().int().positive().default(2),
+  AURA_STT_MIN_CHARS: z.coerce.number().int().positive().default(8)
 });
 
 export type Env = z.infer<typeof envSchema>;

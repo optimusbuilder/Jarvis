@@ -10,9 +10,10 @@ export async function transcribeWithWhisperCpp(args: {
   language?: string;
 }): Promise<string> {
   const model = args.env.WHISPER_MODEL_PATH ?? "models/ggml-base.en.bin";
-  const language = args.language ?? "en";
-
-  const { stdout } = await execFileAsync(args.env.WHISPER_CPP_BIN, [
+  const language = args.language ?? args.env.WHISPER_DEFAULT_LANGUAGE;
+  const commandArgs: string[] = [];
+  if (args.env.WHISPER_NO_GPU) commandArgs.push("-ng");
+  commandArgs.push(
     "-m",
     model,
     "-f",
@@ -21,8 +22,12 @@ export async function transcribeWithWhisperCpp(args: {
     language,
     "--no-timestamps",
     "--no-prints"
-  ]);
+  );
+
+  const { stdout } = await execFileAsync(args.env.WHISPER_CPP_BIN, commandArgs, {
+    timeout: args.env.WHISPER_TIMEOUT_MS,
+    maxBuffer: 8 * 1024 * 1024
+  });
 
   return stdout.trim();
 }
-

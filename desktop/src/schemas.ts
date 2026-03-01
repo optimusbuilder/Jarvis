@@ -22,6 +22,32 @@ export const runRequestSchema = z.object({
   context_snapshot: z.unknown().optional()
 });
 
+const maybeLanguage = z
+  .string()
+  .trim()
+  .min(2)
+  .max(12)
+  .optional();
+
+export const voiceTranscribeRequestSchema = z.object({
+  audio_path: z.string().min(1),
+  language: maybeLanguage
+});
+
+export const voiceRunRequestSchema = voiceTranscribeRequestSchema.extend({
+  dry_run: z.boolean().default(true),
+  context_snapshot: z.unknown().optional()
+});
+
+export const voicePttStartRequestSchema = z.object({
+  output_path: z.string().min(1).optional(),
+  input_device: z.string().min(1).optional()
+});
+
+export const voicePttStopRequestSchema = z.object({
+  capture_id: z.string().min(1).optional()
+});
+
 export const toolResultSchema = z.object({
   success: z.boolean(),
   observed_state: z.string().min(1),

@@ -10,6 +10,11 @@ import { validateActionPlan } from "./contracts.js";
 import { ensureRequestId, logError, logInfo } from "./logging.js";
 
 type AuraRequest = express.Request & { aura_request_id?: string };
+type TtsProvider = typeof elevenLabsTts;
+
+type AppDependencies = {
+  ttsProvider?: TtsProvider;
+};
 
 function withRequestId(req: AuraRequest, res: express.Response, next: express.NextFunction): void {
   req.aura_request_id = ensureRequestId(req, res);
@@ -19,8 +24,10 @@ function withRequestId(req: AuraRequest, res: express.Response, next: express.Ne
 export function createApp(args: {
   env: Env;
   planner: VertexPlanner;
+  deps?: AppDependencies;
 }): express.Express {
   const app = express();
+  const ttsProvider = args.deps?.ttsProvider ?? elevenLabsTts;
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
 
@@ -124,7 +131,7 @@ export function createApp(args: {
     if (!voiceId) return res.status(500).json({ error: "tts_not_configured" });
 
     try {
-      const out = await elevenLabsTts({ env: args.env, voiceId, text: parsed.data.text });
+      const out = await ttsProvider({ env: args.env, voiceId, text: parsed.data.text });
       res.setHeader("content-type", out.contentType);
       logInfo("tts_response", { request_id: requestId, content_type: out.contentType });
       return res.status(200).send(out.audio);

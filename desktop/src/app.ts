@@ -5,14 +5,28 @@ import {
   actionPlanSchema,
   executeRequestSchema,
   runRequestSchema,
+  voicePttStartRequestSchema,
+  voicePttStopRequestSchema,
+  voiceRunRequestSchema,
+  voiceTranscribeRequestSchema,
   toolResultSchema,
   type ActionPlan
 } from "./schemas.js";
 import { allowedToolNames, executeToolCall, toolSchemas } from "./tools.js";
 import { getFrontmostAppName, getPermissionStatus } from "./macos.js";
 import { appendAuditLog, ensureRequestId } from "./logging.js";
+import { transcribeWithWhisperCpp } from "./whisper.js";
+import { startPushToTalkCapture, type PushToTalkCapture } from "./ptt.js";
+import { transcribeAudio, type WhisperTranscriber } from "./voice.js";
 
 type AuraRequest = express.Request & { aura_request_id?: string };
+type BackendPlanFn = typeof backendPlan;
+
+type AgentDependencies = {
+  backendPlan?: BackendPlanFn;
+  whisperTranscribe?: WhisperTranscriber;
+  startPushToTalkCapture?: typeof startPushToTalkCapture;
+};
 
 function withRequestId(req: AuraRequest, res: express.Response, next: express.NextFunction): void {
   req.aura_request_id = ensureRequestId(req, res);
@@ -67,8 +81,57 @@ async function writeAudit(args: {
   }
 }
 
-export function createAgentApp(args: { env: Env }): express.Express {
+async function requestPlan(args: {
+  env: Env;
+  planner: BackendPlanFn;
+  requestId: string;
+  instruction: string;
+  contextSnapshot?: unknown;
+}): Promise<{ plan: ActionPlan; backendRequestId: string | null }> {
+  const front = await getFrontmostAppName();
+  const planned = await args.planner({
+    env: args.env,
+    instruction: args.instruction,
+    desktopState: {
+      os: "macos",
+      frontmost_app: front ?? "unknown"
+    },
+    contextSnapshot: args.contextSnapshot,
+    requestId: args.requestId
+  });
+  const validated = actionPlanSchema.safeParse(planned.payload);
+  if (!validated.success) {
+    return {
+      backendRequestId: planned.requestId,
+      plan: failClosedPlan("Planner output failed schema validation; no actions were executed.")
+    };
+  }
+  return {
+    backendRequestId: planned.requestId,
+    plan: validated.data
+  };
+}
+
+function classifyVoiceError(error: unknown): { status: number; message: string } {
+  const message = String(error ?? "voice_error");
+  if (message.includes("audio_not_found:")) {
+    return { status: 400, message: "audio_not_found" };
+  }
+  if (message.includes("ptt_not_supported")) {
+    return { status: 400, message: "ptt_not_supported" };
+  }
+  if (message.includes("capture_failed")) {
+    return { status: 422, message };
+  }
+  return { status: 500, message };
+}
+
+export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): express.Express {
   const app = express();
+  const planner = args.deps?.backendPlan ?? backendPlan;
+  const whisperTranscriber = args.deps?.whisperTranscribe ?? transcribeWithWhisperCpp;
+  const pttStarter = args.deps?.startPushToTalkCapture ?? startPushToTalkCapture;
+
   app.disable("x-powered-by");
   app.use((req, res, next) => {
     res.setHeader("access-control-allow-origin", "*");
@@ -80,6 +143,7 @@ export function createAgentApp(args: { env: Env }): express.Express {
   app.use(withRequestId);
 
   let lastSnapshot: unknown | null = null;
+  let activeCapture: PushToTalkCapture | null = null;
 
   app.get("/status", async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
@@ -127,6 +191,283 @@ export function createAgentApp(args: { env: Env }): express.Express {
 
   app.get("/snapshot", (_req, res) => {
     return res.json({ ok: true, snapshot: lastSnapshot });
+  });
+
+  app.post("/voice/ptt/start", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = voicePttStartRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_ptt_start_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    if (activeCapture) {
+      return res.status(409).json({
+        error: "capture_already_active",
+        capture_id: activeCapture.capture_id
+      });
+    }
+
+    try {
+      activeCapture = await pttStarter({
+        outputPath: parsed.data.output_path,
+        inputDevice: parsed.data.input_device
+      });
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_ptt_started",
+        data: {
+          capture_id: activeCapture.capture_id,
+          audio_path: activeCapture.audio_path
+        }
+      });
+      return res.json({
+        ok: true,
+        request_id: requestId,
+        capture_id: activeCapture.capture_id,
+        audio_path: activeCapture.audio_path,
+        started_at: activeCapture.started_at
+      });
+    } catch (error) {
+      const classified = classifyVoiceError(error);
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_ptt_start_failed",
+        data: { error: classified.message }
+      });
+      return res.status(classified.status).json({ error: classified.message });
+    }
+  });
+
+  app.post("/voice/ptt/stop", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = voicePttStopRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_ptt_stop_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    if (!activeCapture) {
+      return res.status(409).json({ error: "capture_not_active" });
+    }
+    if (parsed.data.capture_id && parsed.data.capture_id !== activeCapture.capture_id) {
+      return res.status(409).json({ error: "capture_id_mismatch" });
+    }
+
+    const capture = activeCapture;
+    activeCapture = null;
+
+    try {
+      const result = await capture.stop();
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_ptt_stopped",
+        data: {
+          capture_id: capture.capture_id,
+          audio_path: result.audio_path,
+          duration_ms: result.duration_ms,
+          bytes: result.bytes
+        }
+      });
+      return res.json({
+        ok: true,
+        request_id: requestId,
+        capture_id: capture.capture_id,
+        ...result
+      });
+    } catch (error) {
+      const classified = classifyVoiceError(error);
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_ptt_stop_failed",
+        data: { capture_id: capture.capture_id, error: classified.message }
+      });
+      return res.status(classified.status).json({ error: classified.message });
+    }
+  });
+
+  app.post("/voice/transcribe", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = voiceTranscribeRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_transcribe_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    try {
+      const assessment = await transcribeAudio({
+        env: args.env,
+        audioPath: parsed.data.audio_path,
+        language: parsed.data.language,
+        minWords: args.env.AURA_STT_MIN_WORDS,
+        minChars: args.env.AURA_STT_MIN_CHARS,
+        transcriber: whisperTranscriber
+      });
+
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_transcribe_completed",
+        data: {
+          quality: assessment.quality,
+          word_count: assessment.word_count,
+          char_count: assessment.char_count,
+          audio_path: parsed.data.audio_path
+        }
+      });
+
+      return res.json({
+        ok: true,
+        request_id: requestId,
+        audio_path: parsed.data.audio_path,
+        transcript: assessment.transcript,
+        quality: assessment.quality,
+        reason: assessment.reason,
+        word_count: assessment.word_count,
+        char_count: assessment.char_count
+      });
+    } catch (error) {
+      const classified = classifyVoiceError(error);
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_transcribe_failed",
+        data: { error: classified.message, audio_path: parsed.data.audio_path }
+      });
+      return res.status(classified.status).json({ error: classified.message });
+    }
+  });
+
+  app.post("/voice/run", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = voiceRunRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_run_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    let assessment;
+    try {
+      assessment = await transcribeAudio({
+        env: args.env,
+        audioPath: parsed.data.audio_path,
+        language: parsed.data.language,
+        minWords: args.env.AURA_STT_MIN_WORDS,
+        minChars: args.env.AURA_STT_MIN_CHARS,
+        transcriber: whisperTranscriber
+      });
+    } catch (error) {
+      const classified = classifyVoiceError(error);
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_run_transcribe_failed",
+        data: { error: classified.message, audio_path: parsed.data.audio_path }
+      });
+      return res.status(classified.status).json({ error: classified.message });
+    }
+
+    if (assessment.quality !== "good") {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_run_repeat_requested",
+        data: {
+          quality: assessment.quality,
+          reason: assessment.reason,
+          word_count: assessment.word_count,
+          char_count: assessment.char_count
+        }
+      });
+      return res.json({
+        ok: true,
+        request_id: requestId,
+        needs_repeat: true,
+        transcript: assessment.transcript,
+        quality: assessment.quality,
+        reason: assessment.reason,
+        plan: null,
+        results: []
+      });
+    }
+
+    let backendRequestId: string | null = null;
+    let plan: ActionPlan = failClosedPlan("Planner output was invalid; no actions were executed.");
+    try {
+      const planned = await requestPlan({
+        env: args.env,
+        planner,
+        requestId,
+        instruction: assessment.transcript,
+        contextSnapshot: parsed.data.context_snapshot
+      });
+      backendRequestId = planned.backendRequestId;
+      plan = planned.plan;
+    } catch (error) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "voice_run_planner_failed",
+        data: { error: String(error) }
+      });
+      return res.status(502).json({ error: "planner_failed", message: String(error) });
+    }
+
+    const results = await executePlan({
+      plan,
+      dryRun: parsed.data.dry_run
+    });
+
+    await writeAudit({
+      env: args.env,
+      requestId,
+      event: "voice_run_completed",
+      data: {
+        backend_request_id: backendRequestId,
+        dry_run: parsed.data.dry_run,
+        quality: assessment.quality,
+        word_count: assessment.word_count,
+        goal: plan.goal,
+        tool_calls: plan.tool_calls.map((call) => call.name),
+        result_count: results.length
+      }
+    });
+
+    return res.json({
+      ok: true,
+      request_id: requestId,
+      backend_request_id: backendRequestId,
+      needs_repeat: false,
+      transcript: assessment.transcript,
+      quality: assessment.quality,
+      reason: assessment.reason,
+      plan,
+      results
+    });
   });
 
   app.post("/execute", async (req, res) => {
@@ -185,28 +526,19 @@ export function createAgentApp(args: { env: Env }): express.Express {
       return res.status(400).json({ error: "invalid_request" });
     }
 
-    const front = await getFrontmostAppName();
     let backendRequestId: string | null = null;
     let plan: ActionPlan = failClosedPlan("Planner output was invalid; no actions were executed.");
 
     try {
-      const planned = await backendPlan({
+      const planned = await requestPlan({
         env: args.env,
+        planner,
+        requestId,
         instruction: parsed.data.instruction,
-        desktopState: {
-          os: "macos",
-          frontmost_app: front ?? "unknown"
-        },
-        contextSnapshot: parsed.data.context_snapshot,
-        requestId
+        contextSnapshot: parsed.data.context_snapshot
       });
-      backendRequestId = planned.requestId;
-      const validated = actionPlanSchema.safeParse(planned.payload);
-      if (validated.success) {
-        plan = validated.data;
-      } else {
-        plan = failClosedPlan("Planner output failed schema validation; no actions were executed.");
-      }
+      backendRequestId = planned.backendRequestId;
+      plan = planned.plan;
     } catch (err) {
       await writeAudit({
         env: args.env,

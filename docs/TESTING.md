@@ -112,6 +112,56 @@ Expected:
 - Phase 0 and Phase 2 behavior still pass unchanged
 - extension snapshot/redaction changes do not break desktop or backend contracts
 
+## Phase 4 voice completion (`P4-C`)
+
+Prereqs:
+- desktop agent running (`npm -w desktop run dev`)
+- `WHISPER_CPP_BIN` + `WHISPER_MODEL_PATH` set in `.env`
+
+Then run:
+
+```bash
+npm run test:phase4:completion
+```
+
+This verifies:
+- offline whisper.cpp transcription works on a prerecorded speech fixture
+- transcript quality heuristics classify good audio correctly
+- low-signal audio is classified as `repeat` (no action)
+
+## Phase 4 voice integration (`P4-IR`)
+
+Prereqs:
+- backend reachable from desktop agent (`AURA_BACKEND_URL` configured)
+- desktop agent running
+
+Then run:
+
+```bash
+npm run test:phase4:integration
+```
+
+This verifies:
+- `/voice/run` performs local STT then backend `/plan`
+- execution remains in `dry_run` mode
+- `request_id` is preserved through the voice → plan → execute chain
+
+## Phase 4 regression gate
+
+Run:
+
+```bash
+npm run ci:phase0
+npm run test:phase2:integration
+npm run test:phase3:unit
+npm run test:phase3:completion
+npm run test:phase4:completion
+```
+
+Expected:
+- no regressions in previous phases
+- voice endpoints and STT heuristics work without breaking existing agent routes
+
 ## Other workspace tests
 
 ```bash
