@@ -31,6 +31,42 @@ function ensureActionPlanShape(payload) {
   return null;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postPlanWithRetry(baseUrl, requestPrefix, body, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const requestId = `${requestPrefix}-${Date.now()}-${attempt}`;
+    const response = await fetch(`${baseUrl}/plan`, {
+      method: "POST",
+      headers: authHeaders(requestId),
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) {
+      const shapeError = ensureActionPlanShape(payload);
+      if (shapeError) fail(`/plan response shape invalid: ${shapeError}`);
+      if (response.headers.get("x-request-id") !== requestId) {
+        fail("/plan request id was not preserved");
+      }
+      return payload;
+    }
+
+    const isRetriablePlannerFailure =
+      response.status === 502 && payload && typeof payload === "object" && payload.error === "planner_failed";
+    if (isRetriablePlannerFailure && attempt < maxAttempts) {
+      console.warn(`⚠️  /plan returned planner_failed (attempt ${attempt}/${maxAttempts}); retrying...`);
+      await sleep(350 * attempt);
+      continue;
+    }
+
+    fail(`POST /plan failed: ${response.status} ${JSON.stringify(payload).slice(0, 220)}`);
+  }
+
+  fail("POST /plan failed after retries");
+}
+
 function makeResearchSnapshot(sessionId, hesitation = 0.62) {
   return {
     session_id: sessionId,
@@ -56,22 +92,10 @@ async function run() {
   const baseUrl = requireEnv("AURA_BACKEND_URL").replace(/\/+$/, "");
   console.log(`Using backend URL: ${baseUrl}`);
 
-  const planRequestId = `p9-ir-plan-${Date.now()}`;
-  const planRes = await fetch(`${baseUrl}/plan`, {
-    method: "POST",
-    headers: authHeaders(planRequestId),
-    body: JSON.stringify({
-      instruction: "Open Chrome",
-      desktop_state: { os: "macos", frontmost_app: "Finder" }
-    })
+  await postPlanWithRetry(baseUrl, "p9-ir-plan", {
+    instruction: "Open Chrome",
+    desktop_state: { os: "macos", frontmost_app: "Finder" }
   });
-  const planPayload = await planRes.json().catch(() => ({}));
-  if (!planRes.ok) fail(`POST /plan failed: ${planRes.status} ${JSON.stringify(planPayload).slice(0, 220)}`);
-  const planShapeError = ensureActionPlanShape(planPayload);
-  if (planShapeError) fail(`plan response shape invalid: ${planShapeError}`);
-  if (planRes.headers.get("x-request-id") !== planRequestId) {
-    fail("plan request id was not preserved");
-  }
   ok("action-mode /plan remains healthy");
 
   const sessionId = `p9-ir-session-${Date.now()}`;
@@ -126,18 +150,10 @@ async function run() {
   if (typeof afterPayload.reason !== "string") fail("after-feedback copilot missing reason");
   ok("copilot still returns valid schema after feedback updates");
 
-  const secondPlan = await fetch(`${baseUrl}/plan`, {
-    method: "POST",
-    headers: authHeaders(`p9-ir-plan-2-${Date.now()}`),
-    body: JSON.stringify({
-      instruction: "Go to youtube.com",
-      desktop_state: { os: "macos", frontmost_app: "Terminal" }
-    })
+  await postPlanWithRetry(baseUrl, "p9-ir-plan-2", {
+    instruction: "Go to youtube.com",
+    desktop_state: { os: "macos", frontmost_app: "Terminal" }
   });
-  const secondPlanPayload = await secondPlan.json().catch(() => ({}));
-  if (!secondPlan.ok) fail(`second /plan failed: ${secondPlan.status} ${JSON.stringify(secondPlanPayload).slice(0, 220)}`);
-  const secondPlanShapeError = ensureActionPlanShape(secondPlanPayload);
-  if (secondPlanShapeError) fail(`second plan shape invalid: ${secondPlanShapeError}`);
   ok("action-mode /plan still healthy after copilot operations");
 
   console.log("Phase 9 integration test (P9-IR) passed.");

@@ -53,7 +53,22 @@ Note: `desktop/` and `backend/` will automatically load `.env` from the repo roo
 npm -w desktop run dev
 ```
 
-Verify:
+Open the user-facing control UI in your browser:
+
+```bash
+open http://127.0.0.1:8765
+```
+
+The UI gives users:
+- typed instruction execution (`/run`)
+- push-to-talk start/stop + voice execution (`/voice/ptt/*`, `/voice/run`)
+- kill-switch toggle (`/control/kill-switch`)
+- keyboard shortcuts while the page is focused:
+  - `Cmd/Ctrl + Enter` → run typed instruction
+  - `Cmd/Ctrl + Shift + Space` → toggle push-to-talk
+  - `Cmd/Ctrl + Shift + K` → toggle kill switch
+
+API verify (optional for debugging):
 
 ```bash
 curl http://127.0.0.1:8765/status

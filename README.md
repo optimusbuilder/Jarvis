@@ -388,6 +388,24 @@ We fail closed if required permissions are missing.
 
 ---
 
+## User Access (No API Calls Required)
+
+Users should interact through the local Control Center UI, not raw routes:
+
+1. Start agent: `npm -w desktop run dev`
+2. Open UI: `http://127.0.0.1:8765`
+3. Use on-screen actions:
+   - run typed instruction
+   - start/stop push-to-talk and run voice command
+   - toggle kill switch
+
+Page-level shortcuts (when UI tab is focused):
+- `Cmd/Ctrl + Enter` → run typed instruction
+- `Cmd/Ctrl + Shift + Space` → toggle push-to-talk
+- `Cmd/Ctrl + Shift + K` → toggle kill switch
+
+---
+
 ## Testing Strategy (How We Prove Each Feature Works)
 
 Guiding rule: **mock the model for determinism**, then run a small number of live-model smoke tests.

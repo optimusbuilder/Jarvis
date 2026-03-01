@@ -125,6 +125,15 @@ const env: Env = {
 };
 
 describe("desktop agent app", () => {
+  it("serves control center UI at root", async () => {
+    const app = createAgentApp({ env });
+    const res = await invokeRoute({ app, method: "get", path: "/" });
+    expect(res.status).toBe(200);
+    expect(typeof res.body).toBe("string");
+    expect(String(res.body)).toContain("AURA Control Center");
+    expect(res.headers["x-request-id"]).toBeTruthy();
+  });
+
   it("status returns ok", async () => {
     const app = createAgentApp({ env });
     const res = await invokeRoute({ app, method: "get", path: "/status" });
@@ -202,6 +211,64 @@ describe("desktop agent app", () => {
     expect(res.status).toBe(200);
     expect((res.body as any).results[0].normalized_tool).toBe("open_app");
     expect((res.body as any).results[0].result.success).toBe(true);
+  });
+
+  it("execute normalizes vertex computer actions", async () => {
+    const app = createAgentApp({ env });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/execute",
+      body: {
+        dry_run: true,
+        plan: {
+          goal: "search whisper cpp",
+          questions: [],
+          tool_calls: [
+            { name: "computer", args: { action: "key", text: "Cmd+t" } },
+            { name: "computer", args: { action: "type", text: "whisper cpp" } },
+            { name: "computer", args: { action: "key", text: "Return" } }
+          ]
+        }
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect((res.body as any).results[0].normalized_tool).toBe("press_key");
+    expect((res.body as any).results[1].normalized_tool).toBe("type_text");
+    expect((res.body as any).results[2].normalized_tool).toBe("press_key");
+    expect((res.body as any).results[0].result.success).toBe(true);
+    expect((res.body as any).results[1].result.success).toBe(true);
+    expect((res.body as any).results[2].result.success).toBe(true);
+  });
+
+  it("execute normalizes execute_command open patterns", async () => {
+    const app = createAgentApp({ env });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/execute",
+      body: {
+        dry_run: true,
+        plan: {
+          goal: "open chrome search",
+          questions: [],
+          tool_calls: [
+            {
+              name: "execute_command",
+              args: {
+                command: 'open -a "Google Chrome" "https://www.google.com/search?q=whisper+cpp+setup"'
+              }
+            }
+          ]
+        }
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect((res.body as any).results[0].normalized_tool).toBe("open_url");
+    expect((res.body as any).results[0].result.success).toBe(true);
+    expect((res.body as any).results[0].result.observed_state).toContain("dry_run");
   });
 
   it("trash_path requires confirmation for live runs", async () => {

@@ -51,6 +51,7 @@ npm run test:phase2:completion
 ```
 
 This verifies:
+- `GET /` returns the Control Center HTML UI
 - `GET /status` and `GET /tools` return `200`
 - unknown tool calls are blocked (`tool_not_allowed`)
 - known safe tool calls succeed in `dry_run` mode with verification output

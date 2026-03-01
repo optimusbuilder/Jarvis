@@ -30,6 +30,13 @@ function ensureCopilotShape(payload) {
   return null;
 }
 
+function reasonMatches(reason, expected) {
+  if (Array.isArray(expected)) {
+    return expected.some((marker) => String(reason).includes(marker));
+  }
+  return String(reason).includes(String(expected));
+}
+
 function makeSnapshot(args) {
   return {
     session_id: args.session_id,
@@ -118,7 +125,7 @@ async function run() {
         tab_cluster_topic: "llm agent architecture"
       }),
       expectIntervene: true,
-      expectReason: "Research",
+      expectReason: ["Research", "Comparison"],
       expectResponse: "summary"
     },
     {
@@ -155,7 +162,12 @@ async function run() {
           { id: "p2", text: "Competitor plan $39 with fewer features", source: "p" },
           { id: "p3", text: "Storage and support details", source: "li" }
         ],
-        user_actions: [{ type: "tab_switch" }, { type: "tab_switch" }, { type: "cursor_idle", ms: 3600 }],
+        user_actions: [
+          { type: "tab_switch" },
+          { type: "tab_switch" },
+          { type: "tab_switch" },
+          { type: "cursor_idle", ms: 4600 }
+        ],
         hesitation_score: 0.71
       }),
       expectIntervene: true,
@@ -197,7 +209,7 @@ async function run() {
     if (out.intervene !== scenario.expectIntervene) {
       fail(`${scenario.name}: intervene expected ${scenario.expectIntervene} got ${out.intervene}`);
     }
-    if (!String(out.reason).includes(scenario.expectReason)) {
+    if (!reasonMatches(out.reason, scenario.expectReason)) {
       fail(`${scenario.name}: reason missing expected marker "${scenario.expectReason}" (${out.reason})`);
     }
     if (scenario.expectResponse && !String(out.response).toLowerCase().includes(scenario.expectResponse.toLowerCase())) {

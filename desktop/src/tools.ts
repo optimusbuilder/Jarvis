@@ -329,9 +329,121 @@ const toolNameAliases: Record<string, string> = {
   browser_extract_visible_text: "browser_extract_text"
 };
 
-function normalizeToolCall(call: ToolCall): ToolCall {
-  const mappedName = toolNameAliases[call.name] ?? call.name;
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function extractFirstUrl(input: string): string | null {
+  const match = input.match(/https?:\/\/[^\s"']+/i);
+  return match ? match[0] : null;
+}
+
+function extractOpenTarget(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed.toLowerCase().startsWith("open ")) return null;
+  const withoutOpen = trimmed.slice(5).trim();
+  if (!withoutOpen) return null;
+  return stripWrappingQuotes(withoutOpen);
+}
+
+function extractOpenAppName(command: string): string | null {
+  const match = command.match(/open\s+-a\s+("[^"]+"|'[^']+'|[^\s]+)/i);
+  if (!match?.[1]) return null;
+  return stripWrappingQuotes(match[1]);
+}
+
+function normalizeExecuteCommandCall(call: ToolCall): ToolCall | null {
+  if (call.name !== "execute_command") return null;
   const args = { ...(call.args ?? {}) };
+  const command =
+    (typeof args.command === "string" && args.command) ||
+    (typeof args.cmd === "string" && args.cmd) ||
+    "";
+  if (!command.trim()) return null;
+
+  const url = extractFirstUrl(command);
+  if (url) {
+    return { name: "open_url", args: { url } };
+  }
+
+  const openAppName = extractOpenAppName(command);
+  if (openAppName) {
+    return { name: "open_app", args: { name: openAppName } };
+  }
+
+  const openTarget = extractOpenTarget(command);
+  if (openTarget) {
+    return { name: "open_path", args: { path: openTarget } };
+  }
+
+  return null;
+}
+
+function normalizeComputerToolCall(call: ToolCall): ToolCall | null {
+  if (call.name !== "computer") return null;
+  const args = { ...(call.args ?? {}) };
+  const action = typeof args.action === "string" ? args.action.trim().toLowerCase() : "";
+
+  if (action === "key" || action === "keypress" || action === "hotkey") {
+    const text = typeof args.text === "string" ? args.text : "";
+    const arrayKeys = Array.isArray(args.keys)
+      ? args.keys.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+      : [];
+    const textKeys = text
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const keys = arrayKeys.length ? arrayKeys : textKeys;
+    return { name: "press_key", args: { keys } };
+  }
+
+  if (action === "type" || action === "input") {
+    const text =
+      (typeof args.text === "string" && args.text) ||
+      (typeof args.value === "string" && args.value) ||
+      "";
+    return { name: "type_text", args: { text } };
+  }
+
+  if (action === "wait") {
+    const ms =
+      (typeof args.ms === "number" && Number.isFinite(args.ms) && args.ms) ||
+      (typeof args.duration_ms === "number" && Number.isFinite(args.duration_ms) && args.duration_ms) ||
+      0;
+    return { name: "wait_ms", args: { ms } };
+  }
+
+  if (action === "open_url" || action === "navigate") {
+    const url =
+      (typeof args.url === "string" && args.url) ||
+      (typeof args.text === "string" && args.text) ||
+      "";
+    return { name: "open_url", args: { url } };
+  }
+
+  if (action === "click") {
+    const text =
+      (typeof args.text === "string" && args.text) ||
+      (typeof args.target === "string" && args.target) ||
+      "";
+    return { name: "browser_click_text", args: { text } };
+  }
+
+  return null;
+}
+
+function normalizeToolCall(call: ToolCall): ToolCall {
+  const executeMapped = normalizeExecuteCommandCall(call);
+  const computerMapped = normalizeComputerToolCall(executeMapped ?? call);
+  const baseCall = computerMapped ?? executeMapped ?? call;
+
+  const mappedName = toolNameAliases[baseCall.name] ?? baseCall.name;
+  const args = { ...(baseCall.args ?? {}) };
 
   if (mappedName === "open_app") {
     const alias = typeof args.app_name === "string" ? args.app_name : undefined;

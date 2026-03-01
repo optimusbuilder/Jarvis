@@ -23,6 +23,7 @@ import { transcribeWithWhisperCpp } from "./whisper.js";
 import { startPushToTalkCapture, type PushToTalkCapture } from "./ptt.js";
 import { transcribeAudio, type WhisperTranscriber } from "./voice.js";
 import { playAudioFile, writeAudioFile } from "./audio.js";
+import { renderControlCenterHtml } from "./ui.js";
 
 type AuraRequest = express.Request & { aura_request_id?: string };
 type BackendPlanFn = typeof backendPlan;
@@ -212,6 +213,20 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     killSwitchReason = null;
     killSwitchActivatedAt = null;
   }
+
+  app.get("/", (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    res.setHeader("x-request-id", requestId);
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    return res.status(200).send(renderControlCenterHtml());
+  });
+
+  app.get("/ui", (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    res.setHeader("x-request-id", requestId);
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    return res.status(200).send(renderControlCenterHtml());
+  });
 
   app.get("/status", async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
