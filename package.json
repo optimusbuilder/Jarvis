@@ -31,6 +31,10 @@
     "test:phase6:integration": "node scripts/p6-integration.mjs",
     "test:phase7:completion": "node scripts/p7-completion.mjs",
     "test:phase7:integration": "node scripts/p7-integration.mjs",
+    "test:phase8:completion": "node scripts/p8-completion.mjs",
+    "test:phase8:integration": "node scripts/p8-integration.mjs",
+    "test:phase9:completion": "node scripts/p9-completion.mjs",
+    "test:phase9:integration": "node scripts/p9-integration.mjs",
     "test": "npm --workspaces run test",
     "lint": "npm --workspaces run lint",
     "typecheck": "npm --workspaces run typecheck"

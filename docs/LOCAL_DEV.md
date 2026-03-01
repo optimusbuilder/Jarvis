@@ -41,6 +41,10 @@ If you want the desktop agent to call the backend, set:
 - `AURA_ALLOWED_PATHS=/tmp,/Users/<you>/Documents` (optional allowlist for file tools like `create_folder`, `move_path`, `trash_path`)
 - `AURA_SEARCH_MAX_SCAN=5000` (optional max entries scanned by `search_files`)
 
+For Accessibility UI tools (`focus_app`, `click_menu`, `type_text`, `press_key`):
+- macOS only
+- grant Accessibility permission to your terminal/Codex app in System Settings > Privacy & Security > Accessibility
+
 Note: `desktop/` and `backend/` will automatically load `.env` from the repo root (or from the workspace directory) during local development.
 
 ## 3) Run the desktop agent
@@ -55,6 +59,10 @@ Verify:
 curl http://127.0.0.1:8765/status
 curl http://127.0.0.1:8765/tools
 curl -X POST http://127.0.0.1:8765/execute -H "Content-Type: application/json" -d '{"dry_run":true,"plan":{"goal":"Open Chrome","questions":[],"tool_calls":[{"name":"open_app","args":{"name":"Google Chrome"}}]}}'
+curl -X POST http://127.0.0.1:8765/copilot -H "Content-Type: application/json" -d '{"context_snapshot":{"session_id":"local","url":"https://example.com","domain":"example.com","page_type":"article","page_title":"Example","visible_text_chunks":[{"id":"1","text":"hello","source":"p"}],"active_element":null,"form_fields":[],"user_actions":[],"hesitation_score":0.1,"timestamp":"2026-01-01T00:00:00.000Z"}}'
+curl -X POST http://127.0.0.1:8765/copilot/feedback -H "Content-Type: application/json" -d '{"session_id":"local","action":"dismiss","suggestion_kind":"summary"}'
+curl -X POST http://127.0.0.1:8765/control/kill-switch -H "Content-Type: application/json" -d '{"active":true,"reason":"manual stop"}'
+curl -X POST http://127.0.0.1:8765/control/kill-switch -H "Content-Type: application/json" -d '{"active":false}'
 ```
 
 ## 3b) Run the backend locally (local planner + stub TTS)
@@ -152,4 +160,22 @@ Run filesystem safety workflow (create/rename/move/trash with confirmation):
 
 ```bash
 npm run test:phase7:completion
+```
+
+Run Accessibility completion flow (TextEdit focus/type/copy verification):
+
+```bash
+npm run test:phase8:completion
+```
+
+Run copilot golden scenarios + feedback flow against backend:
+
+```bash
+npm run test:phase9:completion
+```
+
+Run copilot integration/regression checks (planner + copilot + feedback in one flow):
+
+```bash
+npm run test:phase9:integration
 ```

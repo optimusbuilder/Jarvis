@@ -55,6 +55,25 @@ export const voiceRespondRequestSchema = z.object({
   output_path: z.string().min(1).optional()
 });
 
+export const copilotRequestSchema = z.object({
+  context_snapshot: z.unknown().optional(),
+  session_id: z.string().min(1).optional()
+});
+
+export const copilotFeedbackRequestSchema = z.object({
+  session_id: z.string().min(1),
+  action: z.enum(["accept", "dismiss"]),
+  suggestion_kind: z.string().min(1).max(80).optional(),
+  reason: z.string().min(1).max(300).optional(),
+  response: z.string().min(1).max(1000).optional(),
+  timestamp: z.string().min(1).optional()
+});
+
+export const killSwitchRequestSchema = z.object({
+  active: z.boolean(),
+  reason: z.string().trim().min(1).max(300).optional()
+});
+
 export const toolResultSchema = z.object({
   success: z.boolean(),
   observed_state: z.string().min(1),

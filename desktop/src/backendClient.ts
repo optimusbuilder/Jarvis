@@ -62,3 +62,71 @@ export async function backendTts(args: {
     contentType: res.headers.get("content-type") ?? "audio/mpeg"
   };
 }
+
+export async function backendCopilot(args: {
+  env: Env;
+  contextSnapshot?: unknown;
+  sessionId?: string;
+  requestId?: string;
+}): Promise<{ payload: unknown; requestId: string | null }> {
+  const res = await fetch(new URL("/copilot", args.env.AURA_BACKEND_URL), {
+    method: "POST",
+    headers: {
+      ...authHeaders(args.env),
+      ...(args.requestId ? { "x-request-id": args.requestId } : {}),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      context_snapshot: args.contextSnapshot,
+      session_id: args.sessionId
+    })
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`backend /copilot failed: ${res.status} ${text}`);
+  }
+
+  return {
+    payload: await res.json(),
+    requestId: res.headers.get("x-request-id")
+  };
+}
+
+export async function backendCopilotFeedback(args: {
+  env: Env;
+  sessionId: string;
+  action: "accept" | "dismiss";
+  suggestionKind?: string;
+  reason?: string;
+  response?: string;
+  timestamp?: string;
+  requestId?: string;
+}): Promise<{ payload: unknown; requestId: string | null }> {
+  const res = await fetch(new URL("/copilot/feedback", args.env.AURA_BACKEND_URL), {
+    method: "POST",
+    headers: {
+      ...authHeaders(args.env),
+      ...(args.requestId ? { "x-request-id": args.requestId } : {}),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      session_id: args.sessionId,
+      action: args.action,
+      suggestion_kind: args.suggestionKind,
+      reason: args.reason,
+      response: args.response,
+      timestamp: args.timestamp
+    })
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`backend /copilot/feedback failed: ${res.status} ${text}`);
+  }
+
+  return {
+    payload: await res.json(),
+    requestId: res.headers.get("x-request-id")
+  };
+}

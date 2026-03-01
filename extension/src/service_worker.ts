@@ -18,6 +18,14 @@ async function persistFeedback(feedback: unknown): Promise<void> {
   await chrome.storage.session.set({ [FEEDBACK_KEY]: trimmed });
 }
 
+async function postFeedbackToAgent(payload: unknown): Promise<void> {
+  await fetch(`${AGENT_BASE_URL}/copilot/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
   if (!msg || typeof msg !== "object") return;
 
@@ -29,8 +37,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
   }
 
   if (msg.type === "AURA_BUBBLE_FEEDBACK") {
-    void persistFeedback(msg.feedback).catch(() => {
-      // best-effort telemetry for local UX testing.
+    const feedback = msg.feedback;
+    void persistFeedback(feedback).catch(() => {
+      // best-effort local telemetry for UX testing.
     });
+    if (feedback && typeof feedback === "object") {
+      const safeFeedback = {
+        session_id: (feedback as Record<string, unknown>).session_id ?? "unknown",
+        action: (feedback as Record<string, unknown>).action,
+        suggestion_kind: (feedback as Record<string, unknown>).kind,
+        reason: (feedback as Record<string, unknown>).reason,
+        response: (feedback as Record<string, unknown>).response,
+        timestamp: (feedback as Record<string, unknown>).at
+      };
+      void postFeedbackToAgent(safeFeedback).catch(() => {
+        // Agent/backed may be unavailable; keep silent in MVP.
+      });
+    }
   }
 });

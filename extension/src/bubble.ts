@@ -53,8 +53,10 @@ export class SuggestionBubble {
   private isVisible = false;
 
   constructor(
-    private onAction: (args: { action: "accept" | "dismiss"; suggestion: BubbleSuggestion }) => void
+    private onAction: (args: { action: "accept" | "dismiss"; suggestion: BubbleSuggestion; session_id?: string }) => void
   ) {}
+
+  private sessionId: string | null = null;
 
   private ensureMounted(): void {
     if (this.root) return;
@@ -125,13 +127,13 @@ export class SuggestionBubble {
       const suggestion = this.currentSuggestion;
       if (!suggestion) return;
       this.hide();
-      this.onAction({ action: "dismiss", suggestion });
+      this.onAction({ action: "dismiss", suggestion, session_id: this.sessionId ?? undefined });
     });
     acceptBtn.addEventListener("click", () => {
       const suggestion = this.currentSuggestion;
       if (!suggestion) return;
       this.hide();
-      this.onAction({ action: "accept", suggestion });
+      this.onAction({ action: "accept", suggestion, session_id: this.sessionId ?? undefined });
     });
   }
 
@@ -156,5 +158,9 @@ export class SuggestionBubble {
 
   get visible(): boolean {
     return this.isVisible;
+  }
+
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
   }
 }

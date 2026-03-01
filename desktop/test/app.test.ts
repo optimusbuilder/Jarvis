@@ -141,6 +141,8 @@ describe("desktop agent app", () => {
     expect((res.body as any).tools).toContain("browser_go");
     expect((res.body as any).tools).toContain("create_folder");
     expect((res.body as any).tools).toContain("trash_path");
+    expect((res.body as any).tools).toContain("focus_app");
+    expect((res.body as any).tools).toContain("press_key");
   });
 
   it("execute blocks unknown tools", async () => {
@@ -255,6 +257,62 @@ describe("desktop agent app", () => {
       else process.env.AURA_ALLOWED_PATHS = previousAllowedPaths;
       await rm(tmpRoot, { recursive: true, force: true });
     }
+  });
+
+  it("kill switch blocks execution until disabled", async () => {
+    const app = createAgentApp({ env });
+
+    const enabled = await invokeRoute({
+      app,
+      method: "post",
+      path: "/control/kill-switch",
+      body: { active: true, reason: "phase8 test" }
+    });
+    expect(enabled.status).toBe(200);
+    expect((enabled.body as any).kill_switch_active).toBe(true);
+
+    const blocked = await invokeRoute({
+      app,
+      method: "post",
+      path: "/execute",
+      body: {
+        dry_run: true,
+        plan: {
+          goal: "should be blocked",
+          questions: [],
+          tool_calls: [{ name: "open_app", args: { name: "TextEdit" } }]
+        }
+      }
+    });
+    expect(blocked.status).toBe(200);
+    expect((blocked.body as any).aborted).toBe(true);
+    expect((blocked.body as any).results[0].result.error).toBe("kill_switch_active");
+
+    const disabled = await invokeRoute({
+      app,
+      method: "post",
+      path: "/control/kill-switch",
+      body: { active: false }
+    });
+    expect(disabled.status).toBe(200);
+    expect((disabled.body as any).kill_switch_active).toBe(false);
+
+    const allowed = await invokeRoute({
+      app,
+      method: "post",
+      path: "/execute",
+      body: {
+        dry_run: true,
+        plan: {
+          goal: "should be allowed",
+          questions: [],
+          tool_calls: [{ name: "open_app", args: { name: "TextEdit" } }]
+        }
+      }
+    });
+    expect(allowed.status).toBe(200);
+    expect((allowed.body as any).aborted).toBe(false);
+    expect((allowed.body as any).results[0].result.success).toBe(true);
   });
 
   it("run rejects invalid requests before planner call", async () => {

@@ -118,6 +118,43 @@ const stubPlanner: VertexPlanner = {
   }
 };
 
+function makeSnapshot(overrides: Record<string, unknown> = {}) {
+  return {
+    session_id: "session-1",
+    url: "https://example.com/form",
+    domain: "example.com",
+    page_type: "form",
+    page_title: "Application Form",
+    visible_text_chunks: [
+      { id: "c1", text: "Describe impact achieved improved outcomes", source: "label" },
+      { id: "c2", text: "Use measurable metrics where possible", source: "p" }
+    ],
+    active_element: {
+      kind: "textarea",
+      label: "Impact statement",
+      value_length: 0
+    },
+    form_fields: [
+      {
+        field_id: "impact",
+        label: "Impact statement",
+        kind: "textarea",
+        required: true,
+        is_sensitive: false,
+        answered: false
+      }
+    ],
+    user_actions: [
+      { type: "cursor_idle", ms: 6200 },
+      { type: "repeated_edit", count: 4 },
+      { type: "tab_switch", from_domain: "example.com", to_domain: "example.com" }
+    ],
+    hesitation_score: 0.82,
+    timestamp: new Date().toISOString(),
+    ...overrides
+  };
+}
+
 describe("backend app", () => {
   it("healthz returns ok", async () => {
     const app = createApp({ env: makeEnv(), planner: stubPlanner });
@@ -194,6 +231,91 @@ describe("backend app", () => {
     expect(Array.isArray((res.body as any).questions)).toBe(true);
     expect((res.body as any).questions[0]).toContain("No actions were executed");
     expect(res.headers["x-request-id"]).toBeTruthy();
+  });
+
+  it("copilot returns grounded intervention for high-friction form context", async () => {
+    const app = createApp({ env: makeEnv(), planner: stubPlanner });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/copilot",
+      body: {
+        context_snapshot: makeSnapshot()
+      }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).intervene).toBe(true);
+    expect(typeof (res.body as any).reason).toBe("string");
+    expect((res.body as any).reason.length).toBeGreaterThan(10);
+    expect((res.body as any).reason).toContain("friction");
+    expect((res.body as any).response.length).toBeGreaterThan(10);
+  });
+
+  it("copilot stays silent on sensitive domains", async () => {
+    const app = createApp({ env: makeEnv(), planner: stubPlanner });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/copilot",
+      body: {
+        context_snapshot: makeSnapshot({
+          domain: "accounts.google.com",
+          url: "https://accounts.google.com/signin"
+        })
+      }
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as any).intervene).toBe(false);
+    expect((res.body as any).reason).toContain("Sensitive domain");
+  });
+
+  it("copilot feedback endpoint records accepts and dismisses per session", async () => {
+    const app = createApp({ env: makeEnv(), planner: stubPlanner });
+    const acceptRes = await invokeRoute({
+      app,
+      method: "post",
+      path: "/copilot/feedback",
+      body: {
+        session_id: "session-abc",
+        action: "accept",
+        suggestion_kind: "form"
+      }
+    });
+    expect(acceptRes.status).toBe(200);
+    expect((acceptRes.body as any).ok).toBe(true);
+    expect((acceptRes.body as any).stats.accepts).toBe(1);
+    expect((acceptRes.body as any).stats.dismisses).toBe(0);
+
+    const dismissRes = await invokeRoute({
+      app,
+      method: "post",
+      path: "/copilot/feedback",
+      body: {
+        session_id: "session-abc",
+        action: "dismiss",
+        suggestion_kind: "form"
+      }
+    });
+    expect(dismissRes.status).toBe(200);
+    expect((dismissRes.body as any).stats.accepts).toBe(1);
+    expect((dismissRes.body as any).stats.dismisses).toBe(1);
+  });
+
+  it("copilot feedback requires auth when token configured", async () => {
+    const app = createApp({
+      env: makeEnv({ AURA_BACKEND_AUTH_TOKEN: "x".repeat(32) }),
+      planner: stubPlanner
+    });
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/copilot/feedback",
+      body: {
+        session_id: "session-locked",
+        action: "accept"
+      }
+    });
+    expect(res.status).toBe(401);
   });
 
   it("tts requires auth when token configured", async () => {

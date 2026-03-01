@@ -314,6 +314,106 @@ Expected:
 - destructive filesystem actions stay gated by confirmation
 - mixed browser + system execution remains stable
 
+## Phase 8 accessibility completion (`P8-C`)
+
+Prereqs:
+- desktop agent running (`npm -w desktop run dev`)
+- macOS Accessibility permission granted for terminal/Codex process
+
+Then run:
+
+```bash
+npm run test:phase8:completion
+```
+
+This verifies:
+- accessibility tools work end-to-end (`focus_app`, `type_text`, `press_key`)
+- typed marker text is copied from TextEdit and verified via clipboard
+- no coordinate-click fallback is required
+
+## Phase 8 kill-switch integration (`P8-IR`)
+
+Prereqs:
+- desktop agent running
+- browser deterministic mode available (`AURA_BROWSER_MODE=http`) for regression part
+
+Then run:
+
+```bash
+npm run test:phase8:integration
+```
+
+This verifies:
+- kill switch can be activated while a plan is running
+- queued destructive step is blocked (`kill_switch_active`) and target file is not trashed
+- after disabling kill switch, mixed browser + system workflow still passes (Phase 7 regression coverage)
+
+## Phase 8 regression gate
+
+Run:
+
+```bash
+npm run ci:phase0
+npm run test:phase7:integration
+npm run test:phase8:completion
+npm run test:phase8:integration
+```
+
+Expected:
+- no regressions in earlier phases
+- kill-switch behavior is deterministic and reversible
+- accessibility tooling works without breaking browser/system controllers
+
+## Phase 9 copilot completion (`P9-C`)
+
+Prereqs:
+- backend deployed and reachable (`AURA_BACKEND_URL` set)
+- backend auth token exported if auth is enabled (`AURA_BACKEND_AUTH_TOKEN`)
+
+Then run:
+
+```bash
+npm run test:phase9:completion
+```
+
+This verifies:
+- 4 golden intervention scenarios return `intervene=true` (form, research, writing, product)
+- sensitive-domain scenario returns `intervene=false`
+- `POST /copilot/feedback` records feedback and returns session stats
+- copilot response schema remains stable across scenarios
+
+## Phase 9 copilot integration/regression (`P9-IR`)
+
+Prereqs:
+- same as `P9-C`
+
+Then run:
+
+```bash
+npm run test:phase9:integration
+```
+
+This verifies:
+- action planner route (`POST /plan`) is still healthy
+- copilot + feedback loop works for the same session
+- planner behavior remains stable after copilot/feedback activity
+
+## Phase 9 regression gate
+
+Run:
+
+```bash
+npm run ci:phase0
+npm run test:phase8:integration
+npm run test:phase9:completion
+npm run test:phase9:integration
+```
+
+Expected:
+- no regressions in earlier phases
+- copilot decisions remain deterministic from structured snapshot inputs
+- feedback updates do not break planner or schema contracts
+
 ## Other workspace tests
 
 ```bash

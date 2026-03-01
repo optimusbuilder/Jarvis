@@ -1,9 +1,12 @@
 import express from "express";
 import type { Env } from "./env.js";
-import { backendPlan, backendTts } from "./backendClient.js";
+import { backendCopilot, backendCopilotFeedback, backendPlan, backendTts } from "./backendClient.js";
 import {
   actionPlanSchema,
+  copilotFeedbackRequestSchema,
+  copilotRequestSchema,
   executeRequestSchema,
+  killSwitchRequestSchema,
   runRequestSchema,
   voicePttStartRequestSchema,
   voiceRespondRequestSchema,
@@ -24,10 +27,14 @@ import { playAudioFile, writeAudioFile } from "./audio.js";
 type AuraRequest = express.Request & { aura_request_id?: string };
 type BackendPlanFn = typeof backendPlan;
 type BackendTtsFn = typeof backendTts;
+type BackendCopilotFn = typeof backendCopilot;
+type BackendCopilotFeedbackFn = typeof backendCopilotFeedback;
 
 type AgentDependencies = {
   backendPlan?: BackendPlanFn;
   backendTts?: BackendTtsFn;
+  backendCopilot?: BackendCopilotFn;
+  backendCopilotFeedback?: BackendCopilotFeedbackFn;
   whisperTranscribe?: WhisperTranscriber;
   startPushToTalkCapture?: typeof startPushToTalkCapture;
   writeAudioFile?: typeof writeAudioFile;
@@ -50,14 +57,32 @@ function failClosedPlan(reason: string): ActionPlan {
 async function executePlan(args: {
   plan: { goal: string; tool_calls: Array<{ name: string; args: Record<string, unknown> }> };
   dryRun: boolean;
+  shouldAbort?: () => { aborted: boolean; reason: string | null };
 }) {
   const results: Array<{
     requested_tool: string;
     normalized_tool: string;
     result: unknown;
   }> = [];
+  let aborted = false;
+  let abortReason: string | null = null;
 
   for (const call of args.plan.tool_calls) {
+    const gate = args.shouldAbort?.();
+    if (gate?.aborted) {
+      aborted = true;
+      abortReason = gate.reason ?? "kill_switch_active";
+      results.push({
+        requested_tool: call.name,
+        normalized_tool: call.name,
+        result: toolResultSchema.parse({
+          success: false,
+          observed_state: `blocked: kill_switch_active reason='${abortReason}'`,
+          error: "kill_switch_active"
+        })
+      });
+      break;
+    }
     const out = await executeToolCall({ call, dryRun: args.dryRun });
     results.push({
       requested_tool: out.requested_tool,
@@ -66,7 +91,11 @@ async function executePlan(args: {
     });
   }
 
-  return results;
+  return {
+    results,
+    aborted,
+    abort_reason: abortReason
+  };
 }
 
 async function writeAudit(args: {
@@ -142,6 +171,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
   const app = express();
   const planner = args.deps?.backendPlan ?? backendPlan;
   const ttsClient = args.deps?.backendTts ?? backendTts;
+  const copilotClient = args.deps?.backendCopilot ?? backendCopilot;
+  const copilotFeedbackClient = args.deps?.backendCopilotFeedback ?? backendCopilotFeedback;
   const whisperTranscriber = args.deps?.whisperTranscribe ?? transcribeWithWhisperCpp;
   const pttStarter = args.deps?.startPushToTalkCapture ?? startPushToTalkCapture;
   const audioWriter = args.deps?.writeAudioFile ?? writeAudioFile;
@@ -159,6 +190,28 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
 
   let lastSnapshot: unknown | null = null;
   let activeCapture: PushToTalkCapture | null = null;
+  let killSwitchActive = false;
+  let killSwitchReason: string | null = null;
+  let killSwitchActivatedAt: string | null = null;
+
+  function readKillSwitch(): { aborted: boolean; reason: string | null } {
+    return {
+      aborted: killSwitchActive,
+      reason: killSwitchReason
+    };
+  }
+
+  function setKillSwitch(args: { active: boolean; reason?: string }): void {
+    if (args.active) {
+      killSwitchActive = true;
+      killSwitchReason = args.reason?.trim() || "manual_kill_switch";
+      killSwitchActivatedAt = new Date().toISOString();
+      return;
+    }
+    killSwitchActive = false;
+    killSwitchReason = null;
+    killSwitchActivatedAt = null;
+  }
 
   app.get("/status", async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
@@ -206,6 +259,155 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
 
   app.get("/snapshot", (_req, res) => {
     return res.json({ ok: true, snapshot: lastSnapshot });
+  });
+
+  app.post("/copilot", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = copilotRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "copilot_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    try {
+      const contextSnapshot = parsed.data.context_snapshot ?? lastSnapshot ?? undefined;
+      const upstream = await copilotClient({
+        env: args.env,
+        contextSnapshot,
+        sessionId: parsed.data.session_id,
+        requestId
+      });
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "copilot_completed",
+        data: {
+          backend_request_id: upstream.requestId,
+          has_snapshot: contextSnapshot != null
+        }
+      });
+      return res.json({
+        ...(typeof upstream.payload === "object" && upstream.payload ? (upstream.payload as object) : { payload: upstream.payload }),
+        backend_request_id: upstream.requestId
+      });
+    } catch (error) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "copilot_failed",
+        data: { error: String(error) }
+      });
+      return res.status(502).json({ error: "copilot_failed", message: String(error) });
+    }
+  });
+
+  app.post("/copilot/feedback", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = copilotFeedbackRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "copilot_feedback_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    try {
+      const upstream = await copilotFeedbackClient({
+        env: args.env,
+        sessionId: parsed.data.session_id,
+        action: parsed.data.action,
+        suggestionKind: parsed.data.suggestion_kind,
+        reason: parsed.data.reason,
+        response: parsed.data.response,
+        timestamp: parsed.data.timestamp,
+        requestId
+      });
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "copilot_feedback_completed",
+        data: {
+          backend_request_id: upstream.requestId,
+          action: parsed.data.action
+        }
+      });
+      return res.json({
+        ...(typeof upstream.payload === "object" && upstream.payload ? (upstream.payload as object) : { payload: upstream.payload }),
+        backend_request_id: upstream.requestId
+      });
+    } catch (error) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "copilot_feedback_failed",
+        data: { error: String(error) }
+      });
+      return res.status(502).json({ error: "copilot_feedback_failed", message: String(error) });
+    }
+  });
+
+  app.get("/control", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    await writeAudit({
+      env: args.env,
+      requestId,
+      event: "control_status",
+      data: {
+        kill_switch_active: killSwitchActive
+      }
+    });
+    return res.json({
+      ok: true,
+      request_id: requestId,
+      kill_switch_active: killSwitchActive,
+      kill_switch_reason: killSwitchReason,
+      kill_switch_activated_at: killSwitchActivatedAt
+    });
+  });
+
+  app.post("/control/kill-switch", async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = killSwitchRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      await writeAudit({
+        env: args.env,
+        requestId,
+        event: "control_kill_switch_invalid_request",
+        data: { issues: parsed.error.issues.length }
+      });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    setKillSwitch({
+      active: parsed.data.active,
+      reason: parsed.data.reason
+    });
+
+    await writeAudit({
+      env: args.env,
+      requestId,
+      event: "control_kill_switch_updated",
+      data: {
+        active: killSwitchActive,
+        reason: killSwitchReason
+      }
+    });
+
+    return res.json({
+      ok: true,
+      request_id: requestId,
+      kill_switch_active: killSwitchActive,
+      kill_switch_reason: killSwitchReason,
+      kill_switch_activated_at: killSwitchActivatedAt
+    });
   });
 
   app.post("/voice/ptt/start", async (req, res) => {
@@ -452,9 +654,10 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       return res.status(502).json({ error: "planner_failed", message: String(error) });
     }
 
-    const results = await executePlan({
+    const execution = await executePlan({
       plan,
-      dryRun: parsed.data.dry_run
+      dryRun: parsed.data.dry_run,
+      shouldAbort: readKillSwitch
     });
 
     await writeAudit({
@@ -468,7 +671,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
         word_count: assessment.word_count,
         goal: plan.goal,
         tool_calls: plan.tool_calls.map((call) => call.name),
-        result_count: results.length
+        result_count: execution.results.length,
+        aborted: execution.aborted
       }
     });
 
@@ -481,7 +685,9 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       quality: assessment.quality,
       reason: assessment.reason,
       plan,
-      results
+      results: execution.results,
+      aborted: execution.aborted,
+      abort_reason: execution.abort_reason
     });
   });
 
@@ -565,11 +771,12 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       return res.status(400).json({ error: "invalid_request" });
     }
 
-    const results = await executePlan({
+    const execution = await executePlan({
       plan: parsed.data.plan,
-      dryRun: parsed.data.dry_run
+      dryRun: parsed.data.dry_run,
+      shouldAbort: readKillSwitch
     });
-    const blockedCount = results.filter((item) => {
+    const blockedCount = execution.results.filter((item) => {
       const result = item.result as { error: string | null };
       return result.error === "tool_not_allowed";
     }).length;
@@ -583,7 +790,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
         goal: parsed.data.plan.goal,
         tool_calls: parsed.data.plan.tool_calls.map((call) => call.name),
         blocked_count: blockedCount,
-        result_count: results.length
+        result_count: execution.results.length,
+        aborted: execution.aborted
       }
     });
 
@@ -591,7 +799,9 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       ok: true,
       request_id: requestId,
       goal: parsed.data.plan.goal,
-      results
+      results: execution.results,
+      aborted: execution.aborted,
+      abort_reason: execution.abort_reason
     });
   });
 
@@ -631,9 +841,10 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       return res.status(502).json({ error: "planner_failed", message: String(err) });
     }
 
-    const results = await executePlan({
+    const execution = await executePlan({
       plan,
-      dryRun: parsed.data.dry_run
+      dryRun: parsed.data.dry_run,
+      shouldAbort: readKillSwitch
     });
 
     await writeAudit({
@@ -646,7 +857,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
         instruction_chars: parsed.data.instruction.length,
         goal: plan.goal,
         tool_calls: plan.tool_calls.map((call) => call.name),
-        result_count: results.length
+        result_count: execution.results.length,
+        aborted: execution.aborted
       }
     });
 
@@ -655,7 +867,9 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       request_id: requestId,
       backend_request_id: backendRequestId,
       plan,
-      results
+      results: execution.results,
+      aborted: execution.aborted,
+      abort_reason: execution.abort_reason
     });
   });
 

@@ -17,6 +17,12 @@ import {
   searchFiles,
   trashPath
 } from "./systemController.js";
+import {
+  clickMenu,
+  focusApp,
+  pressKeys,
+  typeText
+} from "./accessibilityController.js";
 
 type ToolHandler = (args: Record<string, unknown>, opts: { dryRun: boolean }) => Promise<ToolResult>;
 
@@ -71,6 +77,18 @@ const movePathArgs = z.object({
 const trashPathArgs = z.object({ path: z.string().min(1) });
 const confirmActionArgs = z.object({
   reason: z.string().min(3).max(300)
+});
+const focusAppArgs = z.object({ name: z.string().min(1).max(200) });
+const clickMenuArgs = z.object({
+  menu_path: z.array(z.string().min(1).max(120)).min(2).max(8),
+  app_name: z.string().min(1).max(200).optional()
+});
+const typeTextArgs = z.object({ text: z.string().min(1).max(4000) });
+const pressKeyArgs = z.object({
+  keys: z.array(z.string().min(1).max(60)).min(1).max(10)
+});
+const waitMsArgs = z.object({
+  ms: z.coerce.number().int().min(1).max(30000)
 });
 const browserGoArgs = z.object({ url: z.string().url() });
 const browserSearchArgs = z.object({ query: z.string().min(1).max(500) });
@@ -164,6 +182,65 @@ export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
       }
     }
   },
+  focus_app: {
+    description: "Focus an application via macOS Accessibility APIs.",
+    args_schema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  click_menu: {
+    description: "Click a menu item path in the focused app (e.g. [\"Edit\", \"Copy\"]).",
+    args_schema: {
+      type: "object",
+      required: ["menu_path"],
+      properties: {
+        menu_path: {
+          type: "array",
+          minItems: 2,
+          items: { type: "string", minLength: 1 }
+        },
+        app_name: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  type_text: {
+    description: "Type text into the currently focused UI element via Accessibility.",
+    args_schema: {
+      type: "object",
+      required: ["text"],
+      properties: {
+        text: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  press_key: {
+    description: "Press one or more key chords via Accessibility (e.g. [\"cmd+c\"]).",
+    args_schema: {
+      type: "object",
+      required: ["keys"],
+      properties: {
+        keys: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", minLength: 1 }
+        }
+      }
+    }
+  },
+  wait_ms: {
+    description: "Wait for a bounded duration in milliseconds.",
+    args_schema: {
+      type: "object",
+      required: ["ms"],
+      properties: {
+        ms: { type: "integer", minimum: 1, maximum: 30000 }
+      }
+    }
+  },
   browser_new_tab: {
     description: "Open a new browser tab in the automation controller.",
     args_schema: {
@@ -245,6 +322,9 @@ const toolNameAliases: Record<string, string> = {
   delete_file: "trash_path",
   delete_path: "trash_path",
   confirm_destructive_action: "confirm_action",
+  focus_application: "focus_app",
+  press_keys: "press_key",
+  click_menu_item: "click_menu",
   click_result: "browser_click_result",
   browser_extract_visible_text: "browser_extract_text"
 };
@@ -287,6 +367,11 @@ function normalizeToolCall(call: ToolCall): ToolCall {
     if (alias && !args.destination_dir) args.destination_dir = alias;
   }
 
+  if (mappedName === "click_menu") {
+    const alias = Array.isArray(args.path) ? args.path : undefined;
+    if (alias && !args.menu_path) args.menu_path = alias;
+  }
+
   return { name: mappedName, args };
 }
 
@@ -301,6 +386,10 @@ function consumeDestructiveConfirmation(): boolean {
   if (Date.now() > destructiveConfirmationExpiresAt) return false;
   destructiveConfirmationExpiresAt = 0;
   return true;
+}
+
+async function waitForMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export const toolRegistry: Record<string, ToolHandler> = {
@@ -473,6 +562,78 @@ export const toolRegistry: Record<string, ToolHandler> = {
     }
     grantDestructiveConfirmation();
     return ok(`confirmation_granted: ttl_ms=${CONFIRMATION_TTL_MS} reason='${parsed.data.reason}'`);
+  },
+
+  async focus_app(args, opts) {
+    const parsed = focusAppArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for focus_app",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would focus app '${parsed.data.name}'`);
+    const out = await focusApp(parsed.data.name);
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "focus_app_failed" });
+    return ok(out.observed_state);
+  },
+
+  async click_menu(args, opts) {
+    const parsed = clickMenuArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for click_menu",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would click menu '${parsed.data.menu_path.join(" > ")}'`);
+    const out = await clickMenu({
+      menuPath: parsed.data.menu_path,
+      appName: parsed.data.app_name
+    });
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "click_menu_failed" });
+    return ok(out.observed_state);
+  },
+
+  async type_text(args, opts) {
+    const parsed = typeTextArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for type_text",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would type ${parsed.data.text.length} chars`);
+    const out = await typeText(parsed.data.text);
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "type_text_failed" });
+    return ok(out.observed_state);
+  },
+
+  async press_key(args, opts) {
+    const parsed = pressKeyArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for press_key",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would press keys '${parsed.data.keys.join(",")}'`);
+    const out = await pressKeys(parsed.data.keys);
+    if (!out.success) return fail({ observedState: out.observed_state, error: out.error ?? "press_key_failed" });
+    return ok(out.observed_state);
+  },
+
+  async wait_ms(args, opts) {
+    const parsed = waitMsArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for wait_ms",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would wait ${parsed.data.ms}ms`);
+    await waitForMs(parsed.data.ms);
+    return ok(`wait_ms_ok: ms=${parsed.data.ms}`);
   },
 
   async browser_new_tab(_args, opts) {

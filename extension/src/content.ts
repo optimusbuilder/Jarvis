@@ -79,12 +79,13 @@ function repeatedEditCount(): number {
 }
 
 function createBubble(): SuggestionBubble {
-  return new SuggestionBubble(({ action, suggestion }) => {
+  return new SuggestionBubble(({ action, suggestion, session_id }) => {
     touch("bubble_feedback", undefined, `${action}:${suggestion.kind}`);
     try {
       chrome.runtime.sendMessage({
         type: "AURA_BUBBLE_FEEDBACK",
         feedback: {
+          session_id,
           action,
           kind: suggestion.kind,
           reason: suggestion.reason,
@@ -127,6 +128,7 @@ async function startLoop(): Promise<void> {
   trackActivity();
   const sessionId = await getOrCreateSessionId();
   const bubble = createBubble();
+  bubble.setSessionId(sessionId);
 
   setInterval(() => {
     const snapshot = buildContextSnapshot({
