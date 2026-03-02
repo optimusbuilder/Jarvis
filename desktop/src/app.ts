@@ -55,6 +55,111 @@ function failClosedPlan(reason: string): ActionPlan {
   };
 }
 
+function normalizeInstruction(input: string): string {
+  return input.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function looksLikeUrl(text: string): boolean {
+  if (text.startsWith("http://") || text.startsWith("https://")) return true;
+  if (text.includes(" ") || text.length < 4) return false;
+  return /^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(text);
+}
+
+function toUrl(text: string): string {
+  if (text.startsWith("http://") || text.startsWith("https://")) return text;
+  return `https://${text}`;
+}
+
+function toGoogleSearchUrl(query: string): string {
+  return `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`;
+}
+
+function buildLocalFallbackPlan(instruction: string): ActionPlan | null {
+  const text = normalizeInstruction(instruction);
+
+  const openChromeSearchMatch = text.match(
+    /^(open|launch|start)\s+(google chrome|chrome)\s+(and|&)\s+(search|google)\s+(for\s+)?(.+)$/
+  );
+  if (openChromeSearchMatch) {
+    const query = openChromeSearchMatch[6]?.trim();
+    if (!query) return null;
+    return {
+      goal: `Open Google Chrome and search for ${query}`,
+      questions: [],
+      tool_calls: [
+        { name: "open_app", args: { name: "Google Chrome" } },
+        { name: "open_url", args: { url: toGoogleSearchUrl(query) } }
+      ]
+    };
+  }
+
+  const searchMatch = text.match(/^(search|google)(\s+for)?\s+(.+)$/);
+  if (searchMatch) {
+    const query = searchMatch[3]?.trim();
+    if (!query) return null;
+    return {
+      goal: `Search for ${query}`,
+      questions: [],
+      tool_calls: [{ name: "open_url", args: { url: toGoogleSearchUrl(query) } }]
+    };
+  }
+
+  const openMatch = text.match(/^(open|launch|start)\s+(.+)$/);
+  if (openMatch) {
+    const target = openMatch[2]?.trim() ?? "";
+    const appAliases: Record<string, string> = {
+      chrome: "Google Chrome",
+      "google chrome": "Google Chrome",
+      safari: "Safari",
+      finder: "Finder",
+      terminal: "Terminal",
+      notes: "Notes",
+      textedit: "TextEdit"
+    };
+    const pathAliases: Record<string, string> = {
+      documents: "~/Documents",
+      downloads: "~/Downloads",
+      desktop: "~/Desktop"
+    };
+    if (appAliases[target]) {
+      return {
+        goal: `Open ${appAliases[target]}`,
+        questions: [],
+        tool_calls: [{ name: "open_app", args: { name: appAliases[target] } }]
+      };
+    }
+    if (pathAliases[target]) {
+      return {
+        goal: `Open ${target}`,
+        questions: [],
+        tool_calls: [{ name: "open_path", args: { path: pathAliases[target] } }]
+      };
+    }
+    if (looksLikeUrl(target)) {
+      return {
+        goal: `Open ${target}`,
+        questions: [],
+        tool_calls: [{ name: "open_url", args: { url: toUrl(target) } }]
+      };
+    }
+  }
+
+  const goMatch = text.match(/^(go to|navigate to)\s+(.+)$/);
+  if (goMatch) {
+    const target = goMatch[2]?.trim() ?? "";
+    if (!target) return null;
+    if (looksLikeUrl(target)) {
+      return {
+        goal: `Go to ${target}`,
+        questions: [],
+        tool_calls: [{ name: "open_url", args: { url: toUrl(target) } }]
+      };
+    }
+  }
+
+  return null;
+}
+
 async function executePlan(args: {
   plan: { goal: string; tool_calls: Array<{ name: string; args: Record<string, unknown> }> };
   dryRun: boolean;
@@ -97,6 +202,16 @@ async function executePlan(args: {
     aborted,
     abort_reason: abortReason
   };
+}
+
+function executionAllToolCallsBlockedByAllowlist(args: {
+  plan: { tool_calls: Array<{ name: string; args: Record<string, unknown> }> };
+  execution: { results: Array<{ result: { error?: string | null } }>; aborted: boolean };
+}): boolean {
+  if (args.execution.aborted) return false;
+  if (!args.plan.tool_calls.length) return false;
+  if (args.execution.results.length !== args.plan.tool_calls.length) return false;
+  return args.execution.results.every((item) => item.result?.error === "tool_not_allowed");
 }
 
 async function writeAudit(args: {

@@ -15,6 +15,10 @@ function toUrl(text: string): string {
   return `https://${text}`;
 }
 
+function toGoogleSearchUrl(query: string): string {
+  return `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`;
+}
+
 const appAliases: Record<string, string> = {
   chrome: "Google Chrome",
   "google chrome": "Google Chrome",
@@ -35,6 +39,37 @@ export function createLocalPlanner(): VertexPlanner {
   return {
     async plan({ instruction }) {
       const text = normalize(instruction);
+
+      // open chrome and search <query>
+      const openChromeSearchMatch = text.match(
+        /^(open|launch|start)\s+(google chrome|chrome)\s+(and|&)\s+(search|google)\s+(for\s+)?(.+)$/
+      );
+      if (openChromeSearchMatch) {
+        const query = openChromeSearchMatch[6]?.trim();
+        if (query) {
+          return {
+            goal: `Open Google Chrome and search for ${query}`,
+            questions: [],
+            tool_calls: [
+              { name: "open_app", args: { name: "Google Chrome" } },
+              { name: "open_url", args: { url: toGoogleSearchUrl(query) } }
+            ]
+          };
+        }
+      }
+
+      // search <query>
+      const searchMatch = text.match(/^(search|google)(\s+for)?\s+(.+)$/);
+      if (searchMatch) {
+        const query = searchMatch[3]?.trim();
+        if (query) {
+          return {
+            goal: `Search for ${query}`,
+            questions: [],
+            tool_calls: [{ name: "open_url", args: { url: toGoogleSearchUrl(query) } }]
+          };
+        }
+      }
 
       // open <thing>
       const openMatch = text.match(/^(open|launch|start)\s+(.+)$/);
@@ -73,7 +108,7 @@ export function createLocalPlanner(): VertexPlanner {
 
       return {
         goal: "Clarify request",
-        questions: ["I’m not sure what to do. Try: “Open Chrome”, “Open Documents”, or “Go to youtube.com”."],
+        questions: ["I’m not sure what to do. Try: “Open Chrome”, “Search for whisper cpp”, or “Go to youtube.com”."],
         tool_calls: []
       };
     }
