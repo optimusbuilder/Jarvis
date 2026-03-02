@@ -4,7 +4,7 @@
  * Single-process voice-first computer control agent.
  * Phase 1: Wake word detection (Porcupine) ✅
  * Phase 2: VAD recording + whisper transcription ✅
- * Phase 3: Gemini planning (TODO)
+ * Phase 3: Gemini planning ✅
  * Phase 4: Tool execution (TODO)
  * Phase 5: TTS response (TODO)
  */
@@ -13,6 +13,7 @@ import { loadLocalDotenv } from "./localDotenv.js";
 import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
 import { recordWithVAD } from "./vad.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
+import { planCommand } from "./geminiPlanner.js";
 
 // Load environment variables
 loadLocalDotenv();
@@ -22,6 +23,12 @@ const accessKey = process.env.PICOVOICE_ACCESS_KEY;
 if (!accessKey) {
     console.error("❌ PICOVOICE_ACCESS_KEY is not set in .env");
     process.exit(1);
+}
+
+const geminiApiKey = process.env.GEMINI_API_KEY ?? "";
+const geminiModel = process.env.AURA_GEMINI_MODEL ?? undefined;
+if (!geminiApiKey) {
+    console.warn("⚠️  GEMINI_API_KEY not set — will use local fallback planner only.");
 }
 
 const whisperBin = process.env.WHISPER_CPP_BIN ?? "whisper-cli";
@@ -102,7 +109,6 @@ async function handleWakeWord(): Promise<void> {
         const durationSec = (recording.durationMs / 1000).toFixed(1);
         const stoppedBy = recording.stoppedBySilence ? "silence detected" : "max duration";
         console.log(`  ✅ Recorded ${durationSec}s (${stoppedBy})`);
-        console.log(`  📁 Audio: ${recording.audioPath}`);
 
         // ── Phase 2: Transcribe with whisper ──
         console.log("  🧠 Transcribing...");
@@ -121,15 +127,49 @@ async function handleWakeWord(): Promise<void> {
         if (!transcript.trim()) {
             console.log("  ⚠️  No speech detected. Please try again.");
             playErrorSound();
-        } else {
-            console.log("");
-            console.log(`  📝 Transcript: "${transcript}"`);
-            console.log("");
-            console.log("  (Phase 3 will plan this command)");
-            console.log("  (Phase 4 will execute the plan)");
-            console.log("  (Phase 5 will speak the result)");
-            playDoneChime();
+            return;
         }
+
+        console.log(`  📝 Transcript: "${transcript}"`);
+
+        // ── Phase 3: Plan with Gemini ──
+        console.log("  🤖 Planning...");
+        const plan = await planCommand({
+            transcript,
+            geminiApiKey: geminiApiKey || undefined,
+            model: geminiModel,
+        });
+
+        console.log(`  🎯 Goal: ${plan.goal}`);
+
+        if (plan.questions.length > 0) {
+            console.log("  ❓ Questions:");
+            for (const q of plan.questions) {
+                console.log(`     - ${q}`);
+            }
+            playErrorSound();
+            return;
+        }
+
+        if (plan.tool_calls.length === 0) {
+            console.log("  ⚠️  No actions to take.");
+            return;
+        }
+
+        console.log(`  🔧 Plan (${plan.tool_calls.length} tool calls):`);
+        for (const call of plan.tool_calls) {
+            console.log(`     → ${call.name}(${JSON.stringify(call.args)})`);
+        }
+
+        if (plan.spoken_response) {
+            console.log(`  💬 Response: "${plan.spoken_response}"`);
+        }
+
+        console.log("");
+        console.log("  (Phase 4 will execute these tool calls)");
+        console.log("  (Phase 5 will speak the response)");
+
+        playDoneChime();
 
     } catch (error) {
         console.error("  ❌ Error:", String(error));
@@ -150,13 +190,13 @@ function onWakeWordDetected(): void {
 // ── Startup ─────────────────────────────────────────
 console.log("");
 console.log("╔═══════════════════════════════════════╗");
-console.log("║    🌟 AURA Voice Agent — Phase 2      ║");
-console.log("║    Wake Word + Voice Recording + STT   ║");
+console.log("║    🌟 AURA Voice Agent — Phase 3      ║");
+console.log("║    Wake + Record + STT + Planning      ║");
 console.log("╠═══════════════════════════════════════╣");
 console.log("║  Say \"Hey Aura\" then speak a command  ║");
-console.log("║  Recording stops when you pause        ║");
 console.log("║  Press Ctrl+C to exit                  ║");
 console.log("╚═══════════════════════════════════════╝");
+console.log(`  Gemini API: ${geminiApiKey ? "✅ configured" : "⚠️  not set (local fallback only)"}`);
 console.log("");
 
 listener.start(onWakeWordDetected);
