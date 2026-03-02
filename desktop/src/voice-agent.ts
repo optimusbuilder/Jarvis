@@ -1,25 +1,35 @@
 /**
  * AURA Voice Agent — Main entry point.
  *
- * This is the single-process voice-first computer control agent.
- * Phase 1: Wake word detection only.
- * Future phases will add VAD recording, transcription, planning, execution, and TTS.
+ * Single-process voice-first computer control agent.
+ * Phase 1: Wake word detection (Porcupine) ✅
+ * Phase 2: VAD recording + whisper transcription ✅
+ * Phase 3: Gemini planning (TODO)
+ * Phase 4: Tool execution (TODO)
+ * Phase 5: TTS response (TODO)
  */
 
 import { loadLocalDotenv } from "./localDotenv.js";
 import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
+import { recordWithVAD } from "./vad.js";
+import { transcribeWithWhisperCpp } from "./whisper.js";
 
 // Load environment variables
 loadLocalDotenv();
 
+// ── Config ──────────────────────────────────────────
 const accessKey = process.env.PICOVOICE_ACCESS_KEY;
 if (!accessKey) {
     console.error("❌ PICOVOICE_ACCESS_KEY is not set in .env");
-    console.error("   Get a free key at https://console.picovoice.ai");
     process.exit(1);
 }
 
-// Resolve the wake word file
+const whisperBin = process.env.WHISPER_CPP_BIN ?? "whisper-cli";
+const whisperModel = process.env.WHISPER_MODEL_PATH ?? "models/ggml-base.en.bin";
+const whisperLanguage = process.env.WHISPER_DEFAULT_LANGUAGE ?? "en";
+const whisperTimeoutMs = Number(process.env.WHISPER_TIMEOUT_MS ?? "120000");
+const whisperNoGpu = process.env.WHISPER_NO_GPU !== "false";
+
 let keywordPath: string;
 try {
     keywordPath = resolveKeywordPath();
@@ -29,7 +39,10 @@ try {
     process.exit(1);
 }
 
-// Create the wake word listener
+// ── State ───────────────────────────────────────────
+let isProcessingCommand = false;
+
+// ── Wake word listener ──────────────────────────────
 const listener = createWakeWordListener({
     accessKey,
     keywordPath,
@@ -37,56 +50,118 @@ const listener = createWakeWordListener({
     deviceIndex: -1,
 });
 
-// Track state
-let isProcessingCommand = false;
+// ── Play system sound ───────────────────────────────
+function playSound(soundFile: string): void {
+    if (process.platform === "darwin") {
+        import("node:child_process").then(({ execFile }) => {
+            execFile("afplay", [soundFile], () => { });
+        });
+    }
+}
 
-function onWakeWordDetected(): void {
+function playListeningChime(): void {
+    playSound("/System/Library/Sounds/Tink.aiff");
+}
+
+function playDoneChime(): void {
+    playSound("/System/Library/Sounds/Glass.aiff");
+}
+
+function playErrorSound(): void {
+    playSound("/System/Library/Sounds/Basso.aiff");
+}
+
+// ── Command pipeline ────────────────────────────────
+async function handleWakeWord(): Promise<void> {
     if (isProcessingCommand) {
         console.log("⏳ Already processing a command, ignoring wake word.");
         return;
     }
 
     isProcessingCommand = true;
-    console.log("");
-    console.log("═══════════════════════════════════════");
-    console.log("  🗣️  Hey Aura! — Wake word detected  ");
-    console.log("═══════════════════════════════════════");
-    console.log("  (Phase 2 will add: recording → transcription)");
-    console.log("  (Phase 3 will add: planning)");
-    console.log("  (Phase 4 will add: tool execution)");
-    console.log("  (Phase 5 will add: TTS response)");
-    console.log("");
 
-    // Play a system sound to acknowledge (macOS)
-    if (process.platform === "darwin") {
-        import("node:child_process").then(({ execFile }) => {
-            execFile("afplay", ["/System/Library/Sounds/Tink.aiff"], () => {
-                // ignore audio errors
-            });
+    console.log("");
+    console.log("═══════════════════════════════════════");
+    console.log("  🗣️  Hey Aura! — Listening...         ");
+    console.log("═══════════════════════════════════════");
+
+    // Stop the wake word listener to release the microphone
+    listener.stop();
+    playListeningChime();
+
+    try {
+        // ── Phase 2: Record with VAD ──
+        console.log("  🎙️  Recording... (speak your command, I'll stop when you pause)");
+        const recording = await recordWithVAD({
+            silenceThreshold: 0.015,
+            silenceDurationMs: 1500,
+            maxDurationMs: 15000,
+            minDurationMs: 800,
         });
-    }
 
-    // For Phase 1, just reset after a short delay
-    setTimeout(() => {
+        const durationSec = (recording.durationMs / 1000).toFixed(1);
+        const stoppedBy = recording.stoppedBySilence ? "silence detected" : "max duration";
+        console.log(`  ✅ Recorded ${durationSec}s (${stoppedBy})`);
+        console.log(`  📁 Audio: ${recording.audioPath}`);
+
+        // ── Phase 2: Transcribe with whisper ──
+        console.log("  🧠 Transcribing...");
+        const transcript = await transcribeWithWhisperCpp({
+            env: {
+                WHISPER_CPP_BIN: whisperBin,
+                WHISPER_MODEL_PATH: whisperModel,
+                WHISPER_DEFAULT_LANGUAGE: whisperLanguage,
+                WHISPER_TIMEOUT_MS: whisperTimeoutMs,
+                WHISPER_NO_GPU: whisperNoGpu,
+            } as any,
+            audioPath: recording.audioPath,
+            language: whisperLanguage,
+        });
+
+        if (!transcript.trim()) {
+            console.log("  ⚠️  No speech detected. Please try again.");
+            playErrorSound();
+        } else {
+            console.log("");
+            console.log(`  📝 Transcript: "${transcript}"`);
+            console.log("");
+            console.log("  (Phase 3 will plan this command)");
+            console.log("  (Phase 4 will execute the plan)");
+            console.log("  (Phase 5 will speak the result)");
+            playDoneChime();
+        }
+
+    } catch (error) {
+        console.error("  ❌ Error:", String(error));
+        playErrorSound();
+    } finally {
         isProcessingCommand = false;
-        console.log("🎙️  Listening for wake word again...\n");
-    }, 1500);
+        console.log("");
+
+        // Restart the wake word listener
+        listener.start(onWakeWordDetected);
+    }
 }
 
-// Start the listener
+function onWakeWordDetected(): void {
+    void handleWakeWord();
+}
+
+// ── Startup ─────────────────────────────────────────
 console.log("");
 console.log("╔═══════════════════════════════════════╗");
-console.log("║     🌟 AURA Voice Agent — Phase 1     ║");
-console.log("║     Wake Word Detection Active         ║");
+console.log("║    🌟 AURA Voice Agent — Phase 2      ║");
+console.log("║    Wake Word + Voice Recording + STT   ║");
 console.log("╠═══════════════════════════════════════╣");
-console.log("║  Say \"Hey Aura\" to test detection     ║");
-console.log("║  Press Ctrl+C to exit                 ║");
+console.log("║  Say \"Hey Aura\" then speak a command  ║");
+console.log("║  Recording stops when you pause        ║");
+console.log("║  Press Ctrl+C to exit                  ║");
 console.log("╚═══════════════════════════════════════╝");
 console.log("");
 
 listener.start(onWakeWordDetected);
 
-// Graceful shutdown
+// ── Graceful shutdown ───────────────────────────────
 function shutdown(): void {
     console.log("\n🛑 Shutting down AURA Voice Agent...");
     listener.stop();
