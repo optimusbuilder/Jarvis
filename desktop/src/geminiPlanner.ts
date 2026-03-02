@@ -49,6 +49,7 @@ SYSTEM TOOLS (macOS):
 - move_path(path, destination_dir) — Move a file/folder to another directory
 - trash_path(path) — Move to trash (requires confirm_action first)
 - confirm_action(reason) — Grant confirmation for destructive actions
+- find_and_open(query, root?) — Search for a file/folder by name and open the best match. "root" is optional (e.g. "Documents")
 
 ACCESSIBILITY TOOLS (macOS UI automation):
 - focus_app(name) — Focus/activate an application window
@@ -73,7 +74,13 @@ RULES:
 6. spoken_response should be a SHORT natural confirmation (1 sentence max)
 7. Never include markdown. Never include explanations outside JSON.
 8. If the command is ambiguous, add a question to "questions" instead of guessing.
-9. Use multiple tool_calls when the user asks for multiple things.`;
+9. Use multiple tool_calls when the user asks for multiple things.
+10. When user mentions a SPECIFIC file or folder name, use find_and_open(query, root) to search and open it.
+    Examples:
+    - "open the Medical Report folder" → find_and_open(query="Medical Report")
+    - "open my Project X folder in Documents" → find_and_open(query="Project X", root="Documents")
+    - "open the budget spreadsheet" → find_and_open(query="budget")
+11. Only use open_path with ~ paths for WELL-KNOWN folders like ~/Documents, ~/Desktop, ~/Downloads.`;
 
 // ── Local Fallback Planner ──────────────────────────
 
@@ -119,6 +126,26 @@ function tryLocalPlan(transcript: string): ActionPlan | null {
     if (/\b(and|then|also|plus|after that)\b/.test(lower)) {
         return null;
     }
+
+    // ── Pattern: "open X in my documents/downloads/desktop" ──
+    // Captures the file/folder name AND the location
+    const openInFolderMatch = lower.match(
+        /^(?:open|find|show|launch)\s+(?:the\s+|my\s+|a\s+)?(.+?)\s+(?:in|from|inside|under|within)\s+(?:my\s+|the\s+)?(documents|downloads|desktop|home)\s*[.!?]*$/
+    );
+    if (openInFolderMatch) {
+        const query = openInFolderMatch[1]
+            .replace(/\s+(folder|file|directory|app)$/i, "")
+            .trim();
+        const rootFolder = openInFolderMatch[2].charAt(0).toUpperCase() + openInFolderMatch[2].slice(1);
+
+        return {
+            goal: `Find and open "${query}" in ${rootFolder}`,
+            tool_calls: [{ name: "find_and_open", args: { query, root: rootFolder } }],
+            questions: [],
+            spoken_response: `Searching for ${query} in your ${rootFolder} folder.`,
+        };
+    }
+
     const openAppMatch = lower.match(/^(?:open|launch|start)\s+(.+?)(?:\s+app)?[.!?]*$/);
     if (openAppMatch) {
         // Strip articles and possessives ("the", "my", "a") from the target
@@ -127,16 +154,19 @@ function tryLocalPlan(transcript: string): ActionPlan | null {
             .replace(/[.!?]+$/, "")
             .trim();
 
-        // Check for known folder shortcuts
-        for (const [keyword, folderPath] of Object.entries(folderMap)) {
-            if (target.includes(keyword)) {
-                return {
-                    goal: `Open ${keyword} folder`,
-                    tool_calls: [{ name: "open_path", args: { path: folderPath } }],
-                    questions: [],
-                    spoken_response: `Opening your ${keyword} folder.`,
-                };
-            }
+        // Check for known folder shortcuts — only match when the ENTIRE target is just the folder name
+        // (optionally followed by "folder", "tab", "directory")
+        const cleanedTarget = target
+            .replace(/\s+(folder|tab|directory)$/i, "")
+            .trim();
+        const matchedFolder = folderMap[cleanedTarget];
+        if (matchedFolder) {
+            return {
+                goal: `Open ${cleanedTarget} folder`,
+                tool_calls: [{ name: "open_path", args: { path: matchedFolder } }],
+                questions: [],
+                spoken_response: `Opening your ${cleanedTarget} folder.`,
+            };
         }
 
         // Check for known app names
@@ -150,14 +180,22 @@ function tryLocalPlan(transcript: string): ActionPlan | null {
             };
         }
 
-        // Assume it's an app name with proper casing
-        const capitalized = target.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-        return {
-            goal: `Open ${capitalized}`,
-            tool_calls: [{ name: "open_app", args: { name: capitalized } }],
-            questions: [],
-            spoken_response: `Opening ${capitalized}.`,
-        };
+        // ── Pattern: "open the X file/folder" — search for it ──
+        const hasFileIndicator = /\b(file|folder|directory|spreadsheet|document|report|sheet|presentation)\b/i.test(target);
+        if (hasFileIndicator) {
+            const query = target
+                .replace(/\s+(file|folder|directory|spreadsheet|document|report|sheet|presentation)$/i, "")
+                .trim();
+            return {
+                goal: `Find and open "${query}"`,
+                tool_calls: [{ name: "find_and_open", args: { query } }],
+                questions: [],
+                spoken_response: `Searching for ${query}.`,
+            };
+        }
+
+        // Unknown target — DON'T assume it's an app, let Gemini handle it
+        return null;
     }
 
     // "go to [url]"

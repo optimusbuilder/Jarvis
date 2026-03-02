@@ -95,6 +95,10 @@ const browserSearchArgs = z.object({ query: z.string().min(1).max(500) });
 const browserClickResultArgs = z.object({ index: z.coerce.number().int().positive() });
 const browserClickTextArgs = z.object({ text: z.string().min(1).max(500) });
 const browserTypeActiveArgs = z.object({ text: z.string().min(1).max(2000) });
+const findAndOpenArgs = z.object({
+  query: z.string().min(1).max(200),
+  root: z.string().optional()
+});
 
 export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
   open_app: {
@@ -301,6 +305,17 @@ export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
       type: "object",
       properties: {}
     }
+  },
+  find_and_open: {
+    description: "Search for a file or folder by name and open the best match. Use when user references a specific file/folder name.",
+    args_schema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", minLength: 1 },
+        root: { type: "string", description: "Optional subfolder to search within, e.g. 'Documents'" }
+      }
+    }
   }
 };
 
@@ -326,7 +341,9 @@ const toolNameAliases: Record<string, string> = {
   press_keys: "press_key",
   click_menu_item: "click_menu",
   click_result: "browser_click_result",
-  browser_extract_visible_text: "browser_extract_text"
+  browser_extract_visible_text: "browser_extract_text",
+  search_and_open: "find_and_open",
+  locate_and_open: "find_and_open"
 };
 
 function stripWrappingQuotes(value: string): string {
@@ -839,6 +856,95 @@ export const toolRegistry: Record<string, ToolHandler> = {
 
   async browser_extract_visible_text(args, opts) {
     return toolRegistry.browser_extract_text(args, opts);
+  },
+
+  async find_and_open(args, opts) {
+    const parsed = findAndOpenArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for find_and_open",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would search for '${parsed.data.query}' and open best match`);
+    try {
+      const query = parsed.data.query;
+      const root = parsed.data.root;
+
+      // Use macOS Spotlight (mdfind) for searching — fast and indexes everything
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+
+      // Build mdfind query: search by display name
+      const mdfindQuery = `kMDItemDisplayName == "*${query}*"cd`;
+      let matches: string[] = [];
+
+      try {
+        // If root is specified, scope the search to that folder
+        const searchDir = root
+          ? `${process.env.HOME}/${root}`
+          : process.env.HOME ?? "";
+
+        const { stdout } = await execFileAsync("mdfind", [
+          "-onlyin", searchDir,
+          mdfindQuery
+        ], { timeout: 5000 });
+
+        matches = stdout.trim().split("\n").filter(Boolean).slice(0, 20);
+      } catch {
+        // mdfind failed, fall back to searchFiles
+        const result = await searchFiles({ query, limit: 10 });
+        matches = result.matches;
+      }
+
+      // Also try the custom searcher as a fallback if Spotlight returned nothing
+      if (matches.length === 0) {
+        const result = await searchFiles({ query, limit: 10 });
+        matches = result.matches;
+      }
+
+      if (matches.length === 0) {
+        return fail({
+          observedState: `find_and_open_no_results: query='${query}'`,
+          error: `No files or folders found matching '${query}'`
+        });
+      }
+
+      // Score matches: prefer exact name match > name starts with query > partial match
+      const queryLower = query.toLowerCase();
+      const scored = matches.map(m => {
+        const name = m.split('/').pop()?.toLowerCase() ?? '';
+        const nameNoExt = name.replace(/\.[^.]+$/, '');
+        let score = 0;
+        if (name === queryLower || nameNoExt === queryLower) score = 100;
+        else if (name.startsWith(queryLower) || nameNoExt.startsWith(queryLower)) score = 80;
+        else if (name.includes(queryLower)) score = 60;
+        else score = 40;
+
+        // Boost if in the specified root
+        if (root && m.toLowerCase().includes(root.toLowerCase())) score += 10;
+
+        // Boost directories (folders) slightly
+        // Can't stat in sync, but folder names usually don't have extensions
+        if (!name.includes('.')) score += 5;
+
+        return { path: m, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const bestMatch = scored[0].path;
+
+      await openPath(bestMatch);
+      const otherCount = scored.length - 1;
+      const extra = otherCount > 0 ? ` (${otherCount} other matches)` : "";
+      return ok(`find_and_open_ok: opened '${bestMatch}'${extra}`);
+    } catch (error) {
+      return fail({
+        observedState: `find_and_open_failed: query='${parsed.data.query}'`,
+        error
+      });
+    }
   }
 };
 
