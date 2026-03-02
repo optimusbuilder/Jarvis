@@ -119,9 +119,13 @@ function tryLocalPlan(transcript: string): ActionPlan | null {
     if (/\b(and|then|also|plus|after that)\b/.test(lower)) {
         return null;
     }
-    const openAppMatch = lower.match(/^(?:open|launch|start)\s+(.+?)(?:\s+app)?$/);
+    const openAppMatch = lower.match(/^(?:open|launch|start)\s+(.+?)(?:\s+app)?[.!?]*$/);
     if (openAppMatch) {
-        const target = openAppMatch[1].trim();
+        // Strip articles and possessives ("the", "my", "a") from the target
+        const target = openAppMatch[1].trim()
+            .replace(/^(?:the|my|a|an)\s+/i, "")
+            .replace(/[.!?]+$/, "")
+            .trim();
 
         // Check for known folder shortcuts
         for (const [keyword, folderPath] of Object.entries(folderMap)) {
@@ -185,6 +189,61 @@ function tryLocalPlan(transcript: string): ActionPlan | null {
     return null;
 }
 
+// ── JSON Repair ─────────────────────────────────────
+
+/**
+ * Attempt to repair truncated JSON from Gemini.
+ * Closes unclosed arrays and objects to make it parseable.
+ */
+function repairTruncatedJson(text: string): unknown | null {
+    let attempt = text.trim();
+
+    // Try progressively adding closing tokens
+    const closers = ['"}', "}]}", "]}", "}", "]"];
+
+    for (let i = 0; i < 8; i++) {
+        for (const closer of closers) {
+            try {
+                const repaired = attempt + closer;
+                return JSON.parse(repaired);
+            } catch {
+                // try next
+            }
+        }
+        // Remove trailing comma or incomplete property
+        attempt = attempt.replace(/,\s*$/, "").replace(/,\s*"[^"]*"?\s*$/, "");
+    }
+
+    // Try extracting just the first complete object
+    try {
+        // Look for the first { and try to find matching }
+        const start = text.indexOf("{");
+        if (start >= 0) {
+            let depth = 0;
+            let inString = false;
+            let escaped = false;
+            for (let i = start; i < text.length; i++) {
+                const ch = text[i];
+                if (escaped) { escaped = false; continue; }
+                if (ch === "\\") { escaped = true; continue; }
+                if (ch === '"') { inString = !inString; continue; }
+                if (inString) continue;
+                if (ch === "{") depth++;
+                if (ch === "}") {
+                    depth--;
+                    if (depth === 0) {
+                        return JSON.parse(text.slice(start, i + 1));
+                    }
+                }
+            }
+        }
+    } catch {
+        // give up
+    }
+
+    return null;
+}
+
 // ── Gemini API Planner ──────────────────────────────
 
 export async function planWithGemini(args: {
@@ -206,7 +265,7 @@ export async function planWithGemini(args: {
         model: modelName,
         generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 4096,
             responseMimeType: "application/json",
         },
         systemInstruction: SYSTEM_PROMPT,
@@ -215,12 +274,18 @@ export async function planWithGemini(args: {
     const result = await model.generateContent(args.transcript);
     const text = result.response.text().trim();
 
-    // Parse JSON response
+    // Parse JSON response — with repair for truncated output
     let parsed: unknown;
     try {
         parsed = JSON.parse(text);
     } catch {
-        throw new Error(`Gemini did not return valid JSON: ${text.slice(0, 200)}`);
+        // Attempt to repair truncated JSON
+        const repaired = repairTruncatedJson(text);
+        if (repaired) {
+            parsed = repaired;
+        } else {
+            throw new Error("I had trouble understanding that. Could you try rephrasing your command?");
+        }
     }
 
     // Validate structure
@@ -284,10 +349,15 @@ export async function planCommand(args: {
         const localPlan = tryLocalPlan(args.transcript);
         if (localPlan) return localPlan;
 
+        // Return a user-friendly error, not raw exception text
+        const msg = String(error);
+        const friendly = msg.includes("rephras")
+            ? msg
+            : "I had trouble planning that command. Could you try rephrasing?";
         return {
             goal: "Planning failed",
             tool_calls: [],
-            questions: [`Planning failed: ${String(error)}`],
+            questions: [friendly],
         };
     }
 }
