@@ -13,6 +13,8 @@ const WAKE_POLL_INTERVAL_MS = Number(process.env.AURA_WAKE_POLL_INTERVAL_MS || 2
 const WAKE_CAPTURE_MS = Number(process.env.AURA_WAKE_CAPTURE_MS || 1800);
 const WAKE_COOLDOWN_MS = Number(process.env.AURA_WAKE_COOLDOWN_MS || 8000);
 const COMMAND_CAPTURE_MS = Number(process.env.AURA_COMMAND_CAPTURE_MS || 4200);
+const AGENT_READY_TIMEOUT_MS = Number(process.env.AURA_AGENT_READY_TIMEOUT_MS || 8000);
+const AGENT_READY_POLL_MS = Number(process.env.AURA_AGENT_READY_POLL_MS || 250);
 
 const SETTINGS_FILENAME = "aura-companion.settings.json";
 const STACK_RESTART_BASE_DELAY_MS = 2400;
@@ -32,7 +34,7 @@ const defaultSettings = {
   wakeWordEnabled: false,
   openAtLogin: true,
   autoRestartCompanion: true,
-  autoStartStack: false,
+  autoStartStack: true,
   playSoundCues: true
 };
 
@@ -363,12 +365,14 @@ function stackEntries() {
     const base = path.join(process.resourcesPath, "embedded");
     return {
       mode: "packaged",
+      base,
       backend: path.join(base, "backend-dist", "index.js"),
       desktop: path.join(base, "desktop-dist", "index.js")
     };
   }
   return {
     mode: "dev",
+    base: null,
     backend: path.join(REPO_ROOT, "backend", "dist", "index.js"),
     desktop: path.join(REPO_ROOT, "desktop", "dist", "index.js")
   };
@@ -403,12 +407,48 @@ async function ensureDevStackBuildArtifacts(entries) {
   await spawnAndWait(npmCommand(), ["-w", "desktop", "run", "build"], REPO_ROOT);
 }
 
+async function ensurePackagedEmbeddedDependencies(entries) {
+  if (entries.mode !== "packaged") return;
+  const base = entries.base;
+  if (!base) return;
+  const expressPackage = path.join(base, "node_modules", "express", "package.json");
+  const zodPackage = path.join(base, "node_modules", "zod", "package.json");
+  const [hasExpress, hasZod] = await Promise.all([fileExists(expressPackage), fileExists(zodPackage)]);
+  if (hasExpress && hasZod) return;
+  throw new Error("embedded_dependencies_missing: rebuild with `npm run build:companion:app`");
+}
+
 function spawnNodeScript(scriptPath, env, cwd) {
   return spawn(process.execPath, ["--run-as-node", scriptPath], {
     cwd,
     stdio: "ignore",
     env
   });
+}
+
+async function waitForAgentReady() {
+  const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
+  let lastError = null;
+  while (Date.now() <= deadline) {
+    try {
+      await agentJson("/status");
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(AGENT_READY_POLL_MS);
+    }
+  }
+  throw new Error(`agent_unreachable: ${summarizeError(lastError, "status_timeout")}`);
+}
+
+async function ensureAgentAvailable(reason) {
+  if (!stackIsRunning()) {
+    const started = await startAuraStack({ reason });
+    if (started.ok === false && !stackIsRunning()) {
+      throw new Error(`stack_start_failed: ${started.error ?? "unknown_error"}`);
+    }
+  }
+  await waitForAgentReady();
 }
 
 function clearStackRestartTimer() {
@@ -472,9 +512,11 @@ function handleStackProcessEnded(args) {
   stackFailureHandling = true;
 
   tearDownStackProcesses({ force: true });
+  const summary = `Aura stack ${label} exited (${detail})`;
   updateState({
     lastAction: "stack-exited",
-    lastResponse: `Aura stack ${label} exited (${detail})`
+    lastResponse: summary,
+    lastError: summary
   });
 
   const shouldRestart = !suppressNextStackRestart;
@@ -497,6 +539,7 @@ async function startAuraStack(args = {}) {
   try {
     const entries = stackEntries();
     await ensureDevStackBuildArtifacts(entries);
+    await ensurePackagedEmbeddedDependencies(entries);
 
     const backendEntryExists = await fileExists(entries.backend);
     const desktopEntryExists = await fileExists(entries.desktop);
@@ -660,6 +703,7 @@ async function refreshAgentStatus() {
 
 async function startListening() {
   if (activeCaptureId) return { ok: true, capture_id: activeCaptureId };
+  await ensureAgentAvailable("start_listening");
   const started = await agentJson("/voice/ptt/start", { method: "POST", body: {} });
   activeCaptureId = started.capture_id;
   updateState({
@@ -676,6 +720,7 @@ async function stopAndRunVoice() {
   if (!activeCaptureId) {
     throw new Error("capture_not_active");
   }
+  await ensureAgentAvailable("stop_run_voice");
   const captureId = activeCaptureId;
   const stopped = await agentJson("/voice/ptt/stop", {
     method: "POST",
@@ -711,6 +756,7 @@ async function stopAndRunVoice() {
 async function runInstruction(instruction) {
   const text = String(instruction || "").trim();
   if (!text) throw new Error("instruction_required");
+  await ensureAgentAvailable("run_instruction");
   const result = await agentJson("/run", {
     method: "POST",
     body: {
@@ -729,6 +775,7 @@ async function runInstruction(instruction) {
 }
 
 async function setKillSwitch(active, reason = "companion_toggle") {
+  await ensureAgentAvailable("toggle_kill_switch");
   const payload = await agentJson("/control/kill-switch", {
     method: "POST",
     body: {
@@ -756,6 +803,7 @@ async function runWakeWordProbe() {
   if (Date.now() - wakeLastTriggeredAt < WAKE_COOLDOWN_MS) return;
   wakeLoopBusy = true;
   try {
+    await ensureAgentAvailable("wake_word_probe");
     const started = await agentJson("/voice/ptt/start", { method: "POST", body: {} });
     await sleep(WAKE_CAPTURE_MS);
     const stopped = await agentJson("/voice/ptt/stop", {

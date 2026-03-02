@@ -83,7 +83,7 @@ Default behavior:
 - Auto-restart companion: on
 - Sound cues: on
 - Wake phrase: off
-- Auto-start stack: off
+- Auto-start stack: on
 
 ## Notes
 

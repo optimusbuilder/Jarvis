@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
-    "build:mac:app": "electron-builder --mac dir --publish never",
-    "build:mac:dmg": "electron-builder --mac dmg --publish never",
+    "prepare:embedded": "node ../scripts/prepare-companion-embedded.mjs",
+    "build:mac:app": "npm run prepare:embedded && electron-builder --mac dir --publish never",
+    "build:mac:dmg": "npm run prepare:embedded && electron-builder --mac dmg --publish never",
     "test": "node --check main.js && node --check preload.js && node --check renderer/renderer.js",
     "lint": "echo \"(todo)\"",
     "typecheck": "echo \"(todo)\""

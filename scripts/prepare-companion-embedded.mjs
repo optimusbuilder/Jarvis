@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,13 +47,27 @@ async function prepare() {
   await cp(backendDist, embeddedBackend, { recursive: true });
   await cp(desktopDist, embeddedDesktop, { recursive: true });
 
+  const embeddedPackageJson = {
+    name: "@aura/embedded-runtime",
+    private: true,
+    type: "module",
+    dependencies: {
+      express: "^4.21.2",
+      zod: "^3.24.2"
+    }
+  };
+  await writeFile(path.join(embeddedRoot, "package.json"), JSON.stringify(embeddedPackageJson, null, 2), "utf8");
+
+  console.log("Installing embedded runtime dependencies...");
+  await run(npmCommand(), ["install", "--omit=dev"], embeddedRoot);
+
   console.log("Embedded runtime ready:");
   console.log(`- ${embeddedBackend}`);
   console.log(`- ${embeddedDesktop}`);
+  console.log(`- ${path.join(embeddedRoot, "node_modules")}`);
 }
 
 prepare().catch((error) => {
   console.error(`❌ prepare-companion-embedded failed: ${String(error)}`);
   process.exit(1);
 });
-
