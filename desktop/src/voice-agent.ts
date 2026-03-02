@@ -5,7 +5,7 @@
  * Phase 1: Wake word detection (Porcupine) ✅
  * Phase 2: VAD recording + whisper transcription ✅
  * Phase 3: Gemini planning ✅
- * Phase 4: Tool execution (TODO)
+ * Phase 4: Tool execution ✅
  * Phase 5: TTS response (TODO)
  */
 
@@ -14,6 +14,7 @@ import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
 import { recordWithVAD } from "./vad.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
 import { planCommand } from "./geminiPlanner.js";
+import { executeToolCall } from "./tools.js";
 
 // Load environment variables
 loadLocalDotenv();
@@ -48,6 +49,7 @@ try {
 
 // ── State ───────────────────────────────────────────
 let isProcessingCommand = false;
+let killSwitchActive = false;
 
 // ── Wake word listener ──────────────────────────────
 const listener = createWakeWordListener({
@@ -85,6 +87,11 @@ async function handleWakeWord(): Promise<void> {
         return;
     }
 
+    if (killSwitchActive) {
+        console.log("🛑 Kill switch is active — ignoring wake word.");
+        return;
+    }
+
     isProcessingCommand = true;
 
     console.log("");
@@ -97,7 +104,7 @@ async function handleWakeWord(): Promise<void> {
     playListeningChime();
 
     try {
-        // ── Phase 2: Record with VAD ──
+        // ── Record with VAD ──
         console.log("  🎙️  Recording... (speak your command, I'll stop when you pause)");
         const recording = await recordWithVAD({
             silenceThreshold: 0.015,
@@ -110,7 +117,7 @@ async function handleWakeWord(): Promise<void> {
         const stoppedBy = recording.stoppedBySilence ? "silence detected" : "max duration";
         console.log(`  ✅ Recorded ${durationSec}s (${stoppedBy})`);
 
-        // ── Phase 2: Transcribe with whisper ──
+        // ── Transcribe with whisper ──
         console.log("  🧠 Transcribing...");
         const transcript = await transcribeWithWhisperCpp({
             env: {
@@ -132,7 +139,29 @@ async function handleWakeWord(): Promise<void> {
 
         console.log(`  📝 Transcript: "${transcript}"`);
 
-        // ── Phase 3: Plan with Gemini ──
+        // Check for kill switch voice command
+        const lowerTranscript = transcript.toLowerCase();
+        if (lowerTranscript.includes("stop") && lowerTranscript.includes("aura") ||
+            lowerTranscript.includes("kill switch") ||
+            lowerTranscript.includes("abort") ||
+            lowerTranscript.includes("cancel everything")) {
+            killSwitchActive = true;
+            console.log("  🛑 Kill switch activated by voice command!");
+            console.log("  Say \"Hey Aura, resume\" to deactivate.");
+            playErrorSound();
+            return;
+        }
+
+        if (lowerTranscript.includes("resume") || lowerTranscript.includes("continue")) {
+            if (killSwitchActive) {
+                killSwitchActive = false;
+                console.log("  ✅ Kill switch deactivated. Resuming normal operation.");
+                playDoneChime();
+                return;
+            }
+        }
+
+        // ── Plan with Gemini ──
         console.log("  🤖 Planning...");
         const plan = await planCommand({
             transcript,
@@ -156,20 +185,51 @@ async function handleWakeWord(): Promise<void> {
             return;
         }
 
-        console.log(`  🔧 Plan (${plan.tool_calls.length} tool calls):`);
-        for (const call of plan.tool_calls) {
-            console.log(`     → ${call.name}(${JSON.stringify(call.args)})`);
-        }
+        console.log(`  🔧 Executing ${plan.tool_calls.length} tool call(s)...`);
 
-        if (plan.spoken_response) {
-            console.log(`  💬 Response: "${plan.spoken_response}"`);
+        // ── Execute tool calls ──
+        let allSucceeded = true;
+        for (let i = 0; i < plan.tool_calls.length; i++) {
+            const call = plan.tool_calls[i];
+
+            // Check kill switch before each tool call
+            if (killSwitchActive) {
+                console.log(`  🛑 Kill switch active — aborting remaining tool calls.`);
+                allSucceeded = false;
+                break;
+            }
+
+            const stepLabel = `[${i + 1}/${plan.tool_calls.length}]`;
+            console.log(`  ${stepLabel} ${call.name}(${JSON.stringify(call.args)})`);
+
+            const result = await executeToolCall({
+                call: { name: call.name, args: call.args },
+                dryRun: false,
+            });
+
+            if (result.result.success) {
+                console.log(`  ${stepLabel} ✅ ${result.result.observed_state}`);
+            } else {
+                console.log(`  ${stepLabel} ❌ ${result.result.error ?? "unknown error"}`);
+                console.log(`        state: ${result.result.observed_state}`);
+                allSucceeded = false;
+                // Continue with remaining tool calls unless it's critical
+            }
         }
 
         console.log("");
-        console.log("  (Phase 4 will execute these tool calls)");
-        console.log("  (Phase 5 will speak the response)");
+        if (allSucceeded) {
+            console.log("  ✅ All actions completed successfully!");
+            if (plan.spoken_response) {
+                console.log(`  💬 "${plan.spoken_response}"`);
+            }
+            playDoneChime();
+        } else {
+            console.log("  ⚠️  Some actions failed. See errors above.");
+            playErrorSound();
+        }
 
-        playDoneChime();
+        console.log("  (Phase 5 will speak the response)");
 
     } catch (error) {
         console.error("  ❌ Error:", String(error));
@@ -190,8 +250,8 @@ function onWakeWordDetected(): void {
 // ── Startup ─────────────────────────────────────────
 console.log("");
 console.log("╔═══════════════════════════════════════╗");
-console.log("║    🌟 AURA Voice Agent — Phase 3      ║");
-console.log("║    Wake + Record + STT + Planning      ║");
+console.log("║    🌟 AURA Voice Agent — Phase 4      ║");
+console.log("║    Full Pipeline: Voice → Execution    ║");
 console.log("╠═══════════════════════════════════════╣");
 console.log("║  Say \"Hey Aura\" then speak a command  ║");
 console.log("║  Press Ctrl+C to exit                  ║");
