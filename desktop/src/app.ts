@@ -206,12 +206,16 @@ async function executePlan(args: {
 
 function executionAllToolCallsBlockedByAllowlist(args: {
   plan: { tool_calls: Array<{ name: string; args: Record<string, unknown> }> };
-  execution: { results: Array<{ result: { error?: string | null } }>; aborted: boolean };
+  execution: { results: Array<{ result: unknown }>; aborted: boolean };
 }): boolean {
   if (args.execution.aborted) return false;
   if (!args.plan.tool_calls.length) return false;
   if (args.execution.results.length !== args.plan.tool_calls.length) return false;
-  return args.execution.results.every((item) => item.result?.error === "tool_not_allowed");
+  return args.execution.results.every((item) => {
+    if (!item.result || typeof item.result !== "object") return false;
+    const error = (item.result as { error?: unknown }).error;
+    return error === "tool_not_allowed";
+  });
 }
 
 async function writeAudit(args: {
@@ -784,11 +788,58 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       return res.status(502).json({ error: "planner_failed", message: String(error) });
     }
 
-    const execution = await executePlan({
+    let execution = await executePlan({
       plan,
       dryRun: parsed.data.dry_run,
       shouldAbort: readKillSwitch
     });
+    let fallbackUsed = false;
+
+    if (executionAllToolCallsBlockedByAllowlist({ plan, execution })) {
+      const fallbackPlan = buildLocalFallbackPlan(assessment.transcript);
+      if (fallbackPlan) {
+        fallbackUsed = true;
+        plan = fallbackPlan;
+        execution = await executePlan({
+          plan: fallbackPlan,
+          dryRun: parsed.data.dry_run,
+          shouldAbort: readKillSwitch
+        });
+        await writeAudit({
+          env: args.env,
+          requestId,
+          event: "voice_run_fallback_applied",
+          data: {
+            reason: "planner_tools_blocked",
+            instruction_chars: assessment.transcript.length,
+            fallback_goal: fallbackPlan.goal,
+            fallback_tools: fallbackPlan.tool_calls.map((call) => call.name)
+          }
+        });
+      }
+    } else if (!plan.tool_calls.length) {
+      const fallbackPlan = buildLocalFallbackPlan(assessment.transcript);
+      if (fallbackPlan) {
+        fallbackUsed = true;
+        plan = fallbackPlan;
+        execution = await executePlan({
+          plan: fallbackPlan,
+          dryRun: parsed.data.dry_run,
+          shouldAbort: readKillSwitch
+        });
+        await writeAudit({
+          env: args.env,
+          requestId,
+          event: "voice_run_fallback_applied",
+          data: {
+            reason: "planner_empty_tool_calls",
+            instruction_chars: assessment.transcript.length,
+            fallback_goal: fallbackPlan.goal,
+            fallback_tools: fallbackPlan.tool_calls.map((call) => call.name)
+          }
+        });
+      }
+    }
 
     await writeAudit({
       env: args.env,
@@ -802,7 +853,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
         goal: plan.goal,
         tool_calls: plan.tool_calls.map((call) => call.name),
         result_count: execution.results.length,
-        aborted: execution.aborted
+        aborted: execution.aborted,
+        fallback_used: fallbackUsed
       }
     });
 
@@ -817,7 +869,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       plan,
       results: execution.results,
       aborted: execution.aborted,
-      abort_reason: execution.abort_reason
+      abort_reason: execution.abort_reason,
+      planner_fallback_used: fallbackUsed
     });
   });
 
@@ -971,11 +1024,58 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       return res.status(502).json({ error: "planner_failed", message: String(err) });
     }
 
-    const execution = await executePlan({
+    let execution = await executePlan({
       plan,
       dryRun: parsed.data.dry_run,
       shouldAbort: readKillSwitch
     });
+    let fallbackUsed = false;
+
+    if (executionAllToolCallsBlockedByAllowlist({ plan, execution })) {
+      const fallbackPlan = buildLocalFallbackPlan(parsed.data.instruction);
+      if (fallbackPlan) {
+        fallbackUsed = true;
+        plan = fallbackPlan;
+        execution = await executePlan({
+          plan: fallbackPlan,
+          dryRun: parsed.data.dry_run,
+          shouldAbort: readKillSwitch
+        });
+        await writeAudit({
+          env: args.env,
+          requestId,
+          event: "run_fallback_applied",
+          data: {
+            reason: "planner_tools_blocked",
+            instruction_chars: parsed.data.instruction.length,
+            fallback_goal: fallbackPlan.goal,
+            fallback_tools: fallbackPlan.tool_calls.map((call) => call.name)
+          }
+        });
+      }
+    } else if (!plan.tool_calls.length) {
+      const fallbackPlan = buildLocalFallbackPlan(parsed.data.instruction);
+      if (fallbackPlan) {
+        fallbackUsed = true;
+        plan = fallbackPlan;
+        execution = await executePlan({
+          plan: fallbackPlan,
+          dryRun: parsed.data.dry_run,
+          shouldAbort: readKillSwitch
+        });
+        await writeAudit({
+          env: args.env,
+          requestId,
+          event: "run_fallback_applied",
+          data: {
+            reason: "planner_empty_tool_calls",
+            instruction_chars: parsed.data.instruction.length,
+            fallback_goal: fallbackPlan.goal,
+            fallback_tools: fallbackPlan.tool_calls.map((call) => call.name)
+          }
+        });
+      }
+    }
 
     await writeAudit({
       env: args.env,
@@ -988,7 +1088,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
         goal: plan.goal,
         tool_calls: plan.tool_calls.map((call) => call.name),
         result_count: execution.results.length,
-        aborted: execution.aborted
+        aborted: execution.aborted,
+        fallback_used: fallbackUsed
       }
     });
 
@@ -999,7 +1100,8 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
       plan,
       results: execution.results,
       aborted: execution.aborted,
-      abort_reason: execution.abort_reason
+      abort_reason: execution.abort_reason,
+      planner_fallback_used: fallbackUsed
     });
   });
 

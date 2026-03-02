@@ -394,4 +394,76 @@ describe("desktop agent app", () => {
     expect((res.body as any).error).toBe("invalid_request");
     expect(res.headers["x-request-id"]).toBeTruthy();
   });
+
+  it("run applies local fallback when planner tools are blocked", async () => {
+    const app = createAgentApp({
+      env,
+      deps: {
+        backendPlan: async () => ({
+          requestId: "backend-test-1",
+          payload: {
+            goal: "Find aura file",
+            questions: ["unknown"],
+            tool_calls: [{ name: "bash", args: { command: "find ~/Documents -iname '*aura*' -type f" } }]
+          }
+        })
+      }
+    });
+
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/run",
+      body: {
+        instruction: "Open Chrome and search for the latest news on Iran",
+        dry_run: true
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect((res.body as any).planner_fallback_used).toBe(true);
+    expect((res.body as any).plan.tool_calls[0]).toEqual({
+      name: "open_app",
+      args: { name: "Google Chrome" }
+    });
+    expect((res.body as any).plan.tool_calls[1].name).toBe("open_url");
+    expect((res.body as any).results[0].result.success).toBe(true);
+    expect((res.body as any).results[1].result.success).toBe(true);
+  });
+
+  it("run applies local fallback when planner returns no tool calls", async () => {
+    const app = createAgentApp({
+      env,
+      deps: {
+        backendPlan: async () => ({
+          requestId: "backend-test-2",
+          payload: {
+            goal: "Clarify request",
+            questions: ["What do you mean?"],
+            tool_calls: []
+          }
+        })
+      }
+    });
+
+    const res = await invokeRoute({
+      app,
+      method: "post",
+      path: "/run",
+      body: {
+        instruction: "Search for whisper cpp setup",
+        dry_run: true
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect((res.body as any).planner_fallback_used).toBe(true);
+    expect((res.body as any).plan.tool_calls).toEqual([
+      {
+        name: "open_url",
+        args: { url: "https://www.google.com/search?q=whisper%20cpp%20setup" }
+      }
+    ]);
+    expect((res.body as any).results[0].result.success).toBe(true);
+  });
 });
