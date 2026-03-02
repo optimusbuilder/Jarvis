@@ -16,6 +16,7 @@ import { transcribeWithWhisperCpp } from "./whisper.js";
 import { planCommand } from "./geminiPlanner.js";
 import { executeToolCall } from "./tools.js";
 import { speak, type TTSConfig } from "./ttsEngine.js";
+import { startTray } from "./trayMenu.js";
 
 // Load environment variables
 loadLocalDotenv();
@@ -57,6 +58,17 @@ try {
 // ── State ───────────────────────────────────────────
 let isProcessingCommand = false;
 let killSwitchActive = false;
+
+// ── System Tray ─────────────────────────────────────
+const tray = startTray({
+    geminiConnected: !!geminiApiKey,
+    ttsEngine: ttsConfig.elevenLabsApiKey ? "ElevenLabs" : "macOS say",
+    onQuit: () => {
+        console.log("\n🛑 Quit from tray menu.");
+        listener.stop();
+        process.exit(0);
+    },
+});
 
 // ── Wake word listener ──────────────────────────────
 const listener = createWakeWordListener({
@@ -108,6 +120,7 @@ async function handleWakeWord(): Promise<void> {
     }
 
     isProcessingCommand = true;
+    tray.updateState({ status: "listening" });
 
     console.log("");
     console.log("═══════════════════════════════════════");
@@ -120,6 +133,7 @@ async function handleWakeWord(): Promise<void> {
 
     try {
         // ── Record with VAD ──
+        tray.updateState({ status: "recording" });
         console.log("  🎙️  Recording... (speak your command, I'll stop when you pause)");
         const recording = await recordWithVAD({
             silenceThreshold: 0.015,
@@ -133,6 +147,7 @@ async function handleWakeWord(): Promise<void> {
         console.log(`  ✅ Recorded ${durationSec}s (${stoppedBy})`);
 
         // ── Transcribe with whisper ──
+        tray.updateState({ status: "transcribing" });
         console.log("  🧠 Transcribing...");
         const transcript = await transcribeWithWhisperCpp({
             env: {
@@ -153,6 +168,7 @@ async function handleWakeWord(): Promise<void> {
         }
 
         console.log(`  📝 Transcript: "${transcript}"`);
+        tray.updateState({ lastTranscript: transcript });
 
         // Check for kill switch voice command
         const lowerTranscript = transcript.toLowerCase();
@@ -176,6 +192,7 @@ async function handleWakeWord(): Promise<void> {
         }
 
         // ── Plan with Gemini ──
+        tray.updateState({ status: "planning" });
         console.log("  🤖 Planning...");
         const plan = await planCommand({
             transcript,
@@ -200,6 +217,7 @@ async function handleWakeWord(): Promise<void> {
             return;
         }
 
+        tray.updateState({ status: "executing", lastAction: plan.goal });
         console.log(`  🔧 Executing ${plan.tool_calls.length} tool call(s)...`);
 
         // ── Execute tool calls ──
@@ -238,9 +256,11 @@ async function handleWakeWord(): Promise<void> {
         if (allSucceeded) {
             console.log("  ✅ All actions completed successfully!");
             const response = plan.spoken_response ?? "Done.";
+            tray.updateState({ status: "speaking", lastResponse: response });
             await speakResponse(response);
         } else {
             console.log("  ⚠️  Some actions failed.");
+            tray.updateState({ status: "speaking", lastResponse: "Some actions failed" });
             await speakResponse("Some actions failed. Check the console for details.");
         }
 
@@ -249,6 +269,7 @@ async function handleWakeWord(): Promise<void> {
         await speakResponse("Something went wrong. Please try again.");
     } finally {
         isProcessingCommand = false;
+        tray.updateState({ status: "idle" });
         console.log("");
 
         // Restart the wake word listener
@@ -283,6 +304,7 @@ listener.start(onWakeWordDetected);
 function shutdown(): void {
     console.log("\n🛑 Shutting down AURA Voice Agent...");
     listener.stop();
+    tray.stop();
     process.exit(0);
 }
 
