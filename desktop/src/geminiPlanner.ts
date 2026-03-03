@@ -24,7 +24,7 @@ export type ActionPlan = {
 };
 
 // ── System Prompt ───────────────────────────────────
-const SYSTEM_PROMPT = `You are AURA, a voice-controlled computer assistant for macOS.
+const SYSTEM_PROMPT = `You are Jarvis, a voice-controlled computer assistant for macOS.
 The user speaks commands and you convert them into structured tool calls.
 
 Return ONLY a single JSON object matching this schema:

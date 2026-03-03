@@ -93,15 +93,13 @@ function playSound(soundFile: string): void {
 
 function playListeningChime(): void {
     // Custom two-tone rising chime (880Hz → 1320Hz, 200ms)
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const chimePath = resolve(dir, "..", "assets", "wake-chime.wav");
+    const chimePath = resolve(process.cwd(), "desktop", "assets", "wake-chime.wav");
     playSound(chimePath);
 }
 
 function playFollowUpChime(): void {
     // Softer, shorter chime for follow-up listening
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const chimePath = resolve(dir, "..", "assets", "followup-chime.wav");
+    const chimePath = resolve(process.cwd(), "desktop", "assets", "followup-chime.wav");
     playSound(chimePath);
 }
 
