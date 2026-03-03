@@ -10,6 +10,8 @@
  */
 
 import { loadLocalDotenv } from "./localDotenv.js";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
 import { recordWithVAD } from "./vad.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
@@ -91,13 +93,15 @@ function playSound(soundFile: string): void {
 
 function playListeningChime(): void {
     // Custom two-tone rising chime (880Hz → 1320Hz, 200ms)
-    const chimePath = resolve(__dirname, "..", "assets", "wake-chime.wav");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const chimePath = resolve(dir, "..", "assets", "wake-chime.wav");
     playSound(chimePath);
 }
 
 function playFollowUpChime(): void {
     // Softer, shorter chime for follow-up listening
-    const chimePath = resolve(__dirname, "..", "assets", "followup-chime.wav");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const chimePath = resolve(dir, "..", "assets", "followup-chime.wav");
     playSound(chimePath);
 }
 
@@ -334,7 +338,7 @@ async function startFollowUpWindow(): Promise<void> {
     tray.updateState({ status: "listening" });
 
     // Play a subtle tone to indicate we're still listening
-    playSound("/System/Library/Sounds/Tink.aiff");
+    playFollowUpChime();
 
     try {
         const recording = await recordWithVAD({
