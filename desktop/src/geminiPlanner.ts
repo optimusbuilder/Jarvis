@@ -8,7 +8,8 @@
  * when Gemini is unavailable.
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, type Part } from "@google/generative-ai";
+import { captureScreenMimeData } from "./vision.js";
 
 // ── Types ───────────────────────────────────────────
 export type ToolCallPlan = {
@@ -94,7 +95,10 @@ RULES:
       Examples:
       - "Tell me a joke" → empty tool_calls, spoken_response: (a joke)
       - "What is photosynthesis?" → empty tool_calls, spoken_response: (explanation)
-    Use your knowledge to answer factual questions. For anything time-sensitive or you're unsure about, use web_search.`;
+    Use your knowledge to answer factual questions. For anything time-sensitive or you're unsure about, use web_search.
+    12. CONTEXT-AWARE VISION: If an image is attached to your prompt, it is a SCREENSHOT of the user's current display.
+        - You MUST analyze the image if the user asks "what am I looking at?", "read this", "summarize my screen", etc.
+        - Describe what you see accurately and concisely in the spoken_response.`;
 
 // ── Local Fallback Planner ──────────────────────────
 
@@ -135,6 +139,13 @@ const folderMap: Record<string, string> = {
 
 function tryLocalPlan(transcript: string): ActionPlan | null {
     const lower = transcript.toLowerCase().trim();
+
+    // ── Vision bypass ──
+    // If the user asks about the screen, force Gemini API for multimodal analysis
+    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this)\b/.test(lower);
+    if (isScreenQuery) {
+        return null;
+    }
 
     // ── Question detection → route to web_search (skip Gemini!) ──
     // Covers: what/who/when/where/why/how/is/does/can/tell me/price of...
@@ -347,12 +358,28 @@ export async function planWithGemini(args: {
     });
 
     // Build the user message with conversation context
-    let userMessage = args.transcript;
+    let promptString = args.transcript;
     if (args.conversationContext) {
-        userMessage = `[Conversation context]\n${args.conversationContext}\n\n[Current command]\n${args.transcript}`;
+        promptString = `[Conversation context]\n${args.conversationContext}\n\n[Current command]\n${args.transcript}`;
     }
 
-    const result = await model.generateContent(userMessage);
+    const promptParts: Part[] = [{ text: promptString }];
+
+    // Detect if the user is asking about their screen
+    const lower = args.transcript.toLowerCase();
+    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this)\b/.test(lower);
+
+    if (isScreenQuery) {
+        try {
+            console.log("  📸 Capturing screen for context-aware vision...");
+            const mimeData = await captureScreenMimeData();
+            promptParts.push(mimeData);
+        } catch (err) {
+            console.warn(`  ⚠️  Failed to capture screen: ${err}`);
+        }
+    }
+
+    const result = await model.generateContent(promptParts);
     const text = result.response.text().trim();
 
     // Parse JSON response — with repair for truncated output
