@@ -66,21 +66,20 @@ BROWSER TOOLS:
 - browser_type_active(text) — Type into focused browser element
 
 RULES:
-1. For "open Chrome/Safari/etc" → use open_app with the full app name
+1. open_app is ONLY for well-known macOS applications (Safari, Chrome, Finder, Notes, etc). NEVER use open_app for files or folders.
 2. For "open my documents/desktop/downloads" → use open_path with ~/Documents, ~/Desktop, ~/Downloads
-3. For "open the Aura folder" → use open_path with the likely path (e.g. ~/Documents/Aura)
-4. For web searches → use open_url with a Google search URL: https://www.google.com/search?q=...
-5. For "go to youtube.com" → use open_url with the full URL: https://youtube.com
-6. spoken_response should be a SHORT natural confirmation (1 sentence max)
-7. Never include markdown. Never include explanations outside JSON.
-8. If the command is ambiguous, add a question to "questions" instead of guessing.
-9. Use multiple tool_calls when the user asks for multiple things.
-10. When user mentions a SPECIFIC file or folder name, use find_and_open(query, root) to search and open it.
-    Examples:
-    - "open the Medical Report folder" → find_and_open(query="Medical Report")
-    - "open my Project X folder in Documents" → find_and_open(query="Project X", root="Documents")
-    - "open the budget spreadsheet" → find_and_open(query="budget")
-11. Only use open_path with ~ paths for WELL-KNOWN folders like ~/Documents, ~/Desktop, ~/Downloads.`;
+3. For web searches → use open_url with a Google search URL: https://www.google.com/search?q=...
+4. For "go to youtube.com" → use open_url with the full URL: https://youtube.com
+5. spoken_response should be a SHORT natural confirmation (1 sentence max)
+6. Never include markdown. Never include explanations outside JSON.
+7. If the command is ambiguous, add a question to "questions" instead of guessing.
+8. Use multiple tool_calls when the user asks for multiple things.
+9. CRITICAL: When the user mentions a SPECIFIC file, folder, or document by name, ALWAYS use find_and_open to search for it.
+   - "open the Medical Report Analyzer in my documents" → find_and_open(query="Medical Report Analyzer", root="Documents")
+   - "open the readme file" → find_and_open(query="readme")
+   - "open my budget spreadsheet" → find_and_open(query="budget")
+   - "open the 2 Sigma cheat sheets in downloads" → find_and_open(query="2 Sigma cheat sheets", root="Downloads")
+10. Only use open_path with ~ tilde paths for the TOP-LEVEL well-known folders: ~/Documents, ~/Desktop, ~/Downloads.`;
 
 // ── Local Fallback Planner ──────────────────────────
 
