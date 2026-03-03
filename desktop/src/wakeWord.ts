@@ -1,4 +1,4 @@
-import { Porcupine } from "@picovoice/porcupine-node";
+import { Porcupine, BuiltinKeyword, getBuiltinKeywordPath } from "@picovoice/porcupine-node";
 import { PvRecorder } from "@picovoice/pvrecorder-node";
 import path from "node:path";
 import fs from "node:fs";
@@ -27,26 +27,27 @@ export type WakeWordListener = {
  * Looks in the repo root directory for the Hey-Aura folder.
  */
 export function resolveKeywordPath(): string {
-    // Try common locations
-    const candidates = [
-        // Repo root - folder name from picovoice console
-        path.resolve(process.cwd(), "Hey-Aura_en_mac_v4_0_0", "Hey-Aura_en_mac_v4_0_0.ppn"),
-        path.resolve(process.cwd(), "..", "Hey-Aura_en_mac_v4_0_0", "Hey-Aura_en_mac_v4_0_0.ppn"),
-        // Direct in repo root
-        path.resolve(process.cwd(), "Hey-Aura_en_mac_v4_0_0.ppn"),
-        path.resolve(process.cwd(), "..", "Hey-Aura_en_mac_v4_0_0.ppn"),
-    ];
+    // Use built-in Jarvis keyword — no external .ppn file needed
+    try {
+        return getBuiltinKeywordPath(BuiltinKeyword.JARVIS);
+    } catch {
+        // Fallback: try Hey-Aura custom file
+        const candidates = [
+            path.resolve(process.cwd(), "Hey-Aura_en_mac_v4_0_0", "Hey-Aura_en_mac_v4_0_0.ppn"),
+            path.resolve(process.cwd(), "..", "Hey-Aura_en_mac_v4_0_0", "Hey-Aura_en_mac_v4_0_0.ppn"),
+            path.resolve(process.cwd(), "Hey-Aura_en_mac_v4_0_0.ppn"),
+        ];
 
-    for (const candidate of candidates) {
-        if (fs.existsSync(candidate)) {
-            return candidate;
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
         }
-    }
 
-    throw new Error(
-        `Wake word file not found. Looked in:\n${candidates.join("\n")}\n\n` +
-        `Place the Hey-Aura_en_mac_v4_0_0.ppn file in the repo root.`
-    );
+        throw new Error(
+            `Wake word file not found. Built-in Jarvis keyword failed and no custom .ppn found.`
+        );
+    }
 }
 
 /**
@@ -87,7 +88,7 @@ export function createWakeWordListener(config: WakeWordConfig): WakeWordListener
             listening = true;
             shouldStop = false;
 
-            console.log("🎙️  AURA is listening for wake word...");
+            console.log("🎙️  Listening for wake word \"Jarvis\"...");
 
             // Process audio frames in a loop
             const processFrame = async () => {
@@ -98,7 +99,7 @@ export function createWakeWordListener(config: WakeWordConfig): WakeWordListener
                     const keywordIndex = porcupine.process(pcm);
 
                     if (keywordIndex >= 0) {
-                        console.log("✨ Wake word detected: \"Hey Aura\"");
+                        console.log("✨ Wake word detected: \"Jarvis\"");
                         onDetected();
                     }
                 } catch (error) {

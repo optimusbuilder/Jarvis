@@ -2,17 +2,12 @@
  * TTS Engine — Text-to-Speech for AURA voice responses.
  *
  * Supports two backends:
- * 1. ElevenLabs API — high-quality, natural TTS (requires API key)
+ * 1. ElevenLabs API (STREAMING) — pipes audio chunks directly to ffplay
+ *    for near-instant playback. First audio heard in ~500ms.
  * 2. macOS `say` command — free, offline fallback
- *
- * The engine writes audio to a temp file and plays it via `afplay`.
  */
 
-import { execFile } from "node:child_process";
-import { writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { resolve, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -29,14 +24,13 @@ export type TTSConfig = {
 export type TTSResult = {
     /** Which engine was used */
     engine: "elevenlabs" | "macos_say";
-    /** Path to the audio file (if applicable) */
-    audioPath?: string;
     /** Duration of playback in ms */
     durationMs: number;
 };
 
 /**
- * Speak text using ElevenLabs TTS.
+ * Speak text using ElevenLabs TTS with STREAMING playback.
+ * Pipes audio chunks directly to ffplay — first words heard in ~500ms.
  */
 async function speakWithElevenLabs(args: {
     text: string;
@@ -46,7 +40,8 @@ async function speakWithElevenLabs(args: {
 }): Promise<TTSResult> {
     const startMs = Date.now();
 
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(args.voiceId)}`;
+    // Use the STREAMING endpoint
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(args.voiceId)}/stream`;
     const res = await fetch(url, {
         method: "POST",
         headers: {
@@ -58,6 +53,7 @@ async function speakWithElevenLabs(args: {
             text: args.text,
             model_id: args.modelId ?? "eleven_flash_v2_5",
             voice_settings: { stability: 0.3, similarity_boost: 0.8 },
+            optimize_streaming_latency: 3, // max optimization
         }),
     });
 
@@ -66,22 +62,62 @@ async function speakWithElevenLabs(args: {
         throw new Error(`ElevenLabs TTS failed: ${res.status} ${body}`);
     }
 
-    const arrayBuf = await res.arrayBuffer();
-    const audio = Buffer.from(arrayBuf);
+    if (!res.body) {
+        throw new Error("ElevenLabs returned no response body for streaming");
+    }
 
-    // Write to temp file
-    const audioPath = resolve(tmpdir(), `aura-tts-${randomUUID()}.mp3`);
-    await mkdir(dirname(audioPath), { recursive: true });
-    await writeFile(audioPath, audio);
+    // Pipe the audio stream directly to ffplay for instant playback
+    return new Promise<TTSResult>((resolve, reject) => {
+        const player = spawn("ffplay", [
+            "-nodisp",       // no video display
+            "-autoexit",     // exit when done
+            "-loglevel", "quiet",
+            "-f", "mp3",     // input format
+            "-i", "pipe:0",  // read from stdin
+        ], { stdio: ["pipe", "ignore", "ignore"] });
 
-    // Play the audio
-    await execFileAsync("afplay", [audioPath]);
+        let finished = false;
 
-    return {
-        engine: "elevenlabs",
-        audioPath,
-        durationMs: Date.now() - startMs,
-    };
+        player.on("close", (code) => {
+            finished = true;
+            resolve({
+                engine: "elevenlabs",
+                durationMs: Date.now() - startMs,
+            });
+        });
+
+        player.on("error", (err) => {
+            if (!finished) {
+                finished = true;
+                reject(err);
+            }
+        });
+
+        // Stream the response body chunks directly to ffplay's stdin
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+
+        async function pump(): Promise<void> {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    player.stdin.end();
+                    return;
+                }
+                if (!player.stdin.destroyed) {
+                    const canContinue = player.stdin.write(Buffer.from(value));
+                    if (!canContinue) {
+                        await new Promise<void>(r => player.stdin.once("drain", r));
+                    }
+                }
+            }
+        }
+
+        pump().catch(err => {
+            if (!finished) {
+                player.stdin.end();
+            }
+        });
+    });
 }
 
 /**
@@ -100,7 +136,7 @@ async function speakWithMacosSay(text: string): Promise<TTSResult> {
 
 /**
  * Speak text using the best available TTS engine.
- * Tries ElevenLabs first, falls back to macOS `say`.
+ * Tries ElevenLabs (streaming) first, falls back to macOS `say`.
  */
 export async function speak(args: {
     text: string;
@@ -112,7 +148,7 @@ export async function speak(args: {
         return { engine: "macos_say", durationMs: 0 };
     }
 
-    // Try ElevenLabs if configured
+    // Try ElevenLabs streaming if configured
     if (config.elevenLabsApiKey && config.elevenLabsVoiceId) {
         try {
             return await speakWithElevenLabs({

@@ -133,6 +133,28 @@ const folderMap: Record<string, string> = {
 function tryLocalPlan(transcript: string): ActionPlan | null {
     const lower = transcript.toLowerCase().trim();
 
+    // ── Question detection → route to web_search (skip Gemini!) ──
+    // Covers: what/who/when/where/why/how/is/does/can/tell me/price of...
+    const questionPatterns = [
+        /^(?:what|who|when|where|why|how)\b/,
+        /^(?:what's|who's|when's|where's|how's|what're|who're)\b/,
+        /^(?:is|are|was|were|do|does|did|can|could|will|would|should|has|have|had)\b.+\?*$/,
+        /^(?:tell me|tell us)\b/,
+        /^(?:explain|describe|define)\b/,
+        /\b(?:current price|price of|cost of|weather in|weather at|score of|temperature)\b/,
+    ];
+
+    if (questionPatterns.some(p => p.test(lower))) {
+        // Extract a clean search query from the transcript
+        const query = transcript.replace(/[?.!]+$/g, "").trim();
+        return {
+            goal: `Web search: ${query}`,
+            tool_calls: [{ name: "web_search", args: { query } }],
+            questions: [],
+            spoken_response: "Let me look that up.",
+        };
+    }
+
     // Skip compound commands — route to Gemini for multi-action planning
     if (/\b(and|then|also|plus|after that)\b/.test(lower)) {
         return null;
@@ -300,7 +322,7 @@ export async function planWithGemini(args: {
     transcript: string;
     model?: string;
 }): Promise<ActionPlan> {
-    const modelName = args.model ?? "gemini-2.5-flash";
+    const modelName = args.model ?? "gemini-2.0-flash-lite";
 
     // Try local fallback first for simple commands (faster, no API call)
     const localPlan = tryLocalPlan(args.transcript);

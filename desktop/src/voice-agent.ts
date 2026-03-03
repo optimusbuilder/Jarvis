@@ -125,7 +125,7 @@ async function handleWakeWord(): Promise<void> {
 
     console.log("");
     console.log("═══════════════════════════════════════");
-    console.log("  🗣️  Hey Aura! — Listening...         ");
+    console.log("  🗣️  Jarvis! — Listening...             ");
     console.log("═══════════════════════════════════════");
 
     // Stop the wake word listener to release the microphone
@@ -193,7 +193,7 @@ async function handleWakeWord(): Promise<void> {
             lowerTranscript.includes("cancel everything")) {
             killSwitchActive = true;
             console.log("  🛑 Kill switch activated by voice command!");
-            await speakResponse("Kill switch activated. Say Hey Aura, resume to continue.");
+            await speakResponse("Kill switch activated. Say Jarvis, resume to continue.");
             return;
         }
 
@@ -477,7 +477,7 @@ console.log("╔═════════════════════�
 console.log("║    🌟 AURA Voice Agent                ║");
 console.log("║    Voice-First Computer Control        ║");
 console.log("╠═══════════════════════════════════════╣");
-console.log("║  Say \"Hey Aura\" then speak a command  ║");
+console.log("║  Say \"Jarvis\" then speak a command    ║");
 console.log("║  Press Ctrl+C to exit                  ║");
 console.log("╚═══════════════════════════════════════╝");
 console.log(`  Gemini: ${geminiApiKey ? "✅ configured" : "⚠️  local fallback"}`);
