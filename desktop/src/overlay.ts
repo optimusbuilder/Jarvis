@@ -9,13 +9,15 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 let overlayProcess: ChildProcess | null = null;
 
 function getOverlayBinaryPath(): string {
-    return resolve(process.cwd(), "desktop", "assets", "jarvis-overlay");
+    const dir = dirname(fileURLToPath(import.meta.url));
+    return resolve(dir, "..", "assets", "jarvis-overlay");
 }
 
 /**
