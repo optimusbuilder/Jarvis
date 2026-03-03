@@ -18,6 +18,7 @@ import { planCommand } from "./geminiPlanner.js";
 import { executeToolCall } from "./tools.js";
 import { speak, type TTSConfig } from "./ttsEngine.js";
 import { startTray } from "./trayMenu.js";
+import { addUserTurn, addAssistantTurn, getConversationContext, compactIfNeeded } from "./conversationMemory.js";
 
 // Load environment variables
 loadLocalDotenv();
@@ -209,11 +210,16 @@ async function handleWakeWord(): Promise<void> {
         // ── Plan with Gemini ──
         tray.updateState({ status: "planning" });
         console.log("  🤖 Planning...");
+        const conversationContext = getConversationContext();
         const plan = await planCommand({
             transcript,
             geminiApiKey: geminiApiKey || undefined,
             model: geminiModel,
+            conversationContext: conversationContext || undefined,
         });
+
+        // Record user turn
+        addUserTurn(transcript);
 
         console.log(`  🎯 Goal: ${plan.goal}`);
 
@@ -232,6 +238,7 @@ async function handleWakeWord(): Promise<void> {
                 console.log("  💬 Answering question...");
                 tray.updateState({ status: "speaking", lastResponse: plan.spoken_response });
                 await speakResponse(plan.spoken_response);
+                addAssistantTurn(plan.spoken_response);
             } else {
                 console.log("  ⚠️  No actions to take.");
                 await speakResponse("I'm not sure what to do with that command.");
@@ -287,11 +294,16 @@ async function handleWakeWord(): Promise<void> {
             const response = webSearchAnswer || plan.spoken_response || "Done.";
             tray.updateState({ status: "speaking", lastResponse: response });
             await speakResponse(response);
+            addAssistantTurn(response);
         } else {
             console.log("  ⚠️  Some actions failed.");
             tray.updateState({ status: "speaking", lastResponse: "Some actions failed" });
             await speakResponse("Some actions failed. Check the console for details.");
+            addAssistantTurn("Some actions failed.");
         }
+
+        // Compact conversation memory if needed
+        await compactIfNeeded(geminiApiKey || undefined);
 
     } catch (error) {
         console.error("  ❌ Error:", String(error));
@@ -330,7 +342,7 @@ async function startFollowUpWindow(): Promise<void> {
         if (!recording || recording.durationMs < 500) {
             console.log("  ⏱️  No follow-up detected. Returning to wake word mode.");
             console.log("");
-            console.log("🎙️  AURA is listening for wake word...");
+            console.log("🎙️  Listening for \"Jarvis\"...");
             listener.start(onWakeWordDetected);
             return;
         }
@@ -371,7 +383,7 @@ async function startFollowUpWindow(): Promise<void> {
         if (!transcript.trim() || transcript.trim() === "[BLANK_AUDIO]") {
             console.log("  ⚠️  No speech detected. Returning to wake word mode.");
             console.log("");
-            console.log("🎙️  AURA is listening for wake word...");
+            console.log("🎙️  Listening for \"Jarvis\"...");
             listener.start(onWakeWordDetected);
             return;
         }
@@ -382,11 +394,15 @@ async function startFollowUpWindow(): Promise<void> {
         // Plan
         tray.updateState({ status: "planning" });
         console.log("  🤖 Planning...");
+        const conversationContext = getConversationContext();
         const plan = await planCommand({
             transcript,
             geminiApiKey: geminiApiKey || undefined,
             model: geminiModel,
+            conversationContext: conversationContext || undefined,
         });
+
+        addUserTurn(transcript);
 
         console.log(`  🎯 Goal: ${plan.goal}`);
 
@@ -405,6 +421,7 @@ async function startFollowUpWindow(): Promise<void> {
                 console.log("  💬 Answering...");
                 tray.updateState({ status: "speaking", lastResponse: plan.spoken_response });
                 await speakResponse(plan.spoken_response);
+                addAssistantTurn(plan.spoken_response);
             } else {
                 await speakResponse("I'm not sure what to do with that.");
             }
@@ -443,10 +460,14 @@ async function startFollowUpWindow(): Promise<void> {
             const response = webSearchAnswer || plan.spoken_response || "Done.";
             tray.updateState({ status: "speaking", lastResponse: response });
             await speakResponse(response);
+            addAssistantTurn(response);
         } else {
             tray.updateState({ status: "speaking", lastResponse: "Some actions failed" });
             await speakResponse("Some actions failed.");
+            addAssistantTurn("Some actions failed.");
         }
+
+        await compactIfNeeded(geminiApiKey || undefined);
 
         isProcessingCommand = false;
         tray.updateState({ status: "idle" });
@@ -457,7 +478,7 @@ async function startFollowUpWindow(): Promise<void> {
         console.warn(`  ⏱️  Follow-up error: ${String(error)}`);
         // Go back to wake word mode
         console.log("");
-        console.log("🎙️  AURA is listening for wake word...");
+        console.log("🎙️  Listening for \"Jarvis\"...");
         isProcessingCommand = false;
         listener.start(onWakeWordDetected);
     }

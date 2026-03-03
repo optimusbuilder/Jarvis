@@ -321,6 +321,7 @@ export async function planWithGemini(args: {
     apiKey: string;
     transcript: string;
     model?: string;
+    conversationContext?: string;
 }): Promise<ActionPlan> {
     const modelName = args.model ?? "gemini-2.0-flash-lite";
 
@@ -342,7 +343,13 @@ export async function planWithGemini(args: {
         systemInstruction: SYSTEM_PROMPT,
     });
 
-    const result = await model.generateContent(args.transcript);
+    // Build the user message with conversation context
+    let userMessage = args.transcript;
+    if (args.conversationContext) {
+        userMessage = `[Conversation context]\n${args.conversationContext}\n\n[Current command]\n${args.transcript}`;
+    }
+
+    const result = await model.generateContent(userMessage);
     const text = result.response.text().trim();
 
     // Parse JSON response — with repair for truncated output
@@ -397,6 +404,7 @@ export async function planCommand(args: {
     transcript: string;
     geminiApiKey?: string;
     model?: string;
+    conversationContext?: string;
 }): Promise<ActionPlan> {
     // If no API key, only use local planner
     if (!args.geminiApiKey) {
@@ -414,6 +422,7 @@ export async function planCommand(args: {
             apiKey: args.geminiApiKey,
             transcript: args.transcript,
             model: args.model,
+            conversationContext: args.conversationContext,
         });
     } catch (error) {
         // If Gemini fails, try local fallback
