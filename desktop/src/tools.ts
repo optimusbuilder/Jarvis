@@ -2,6 +2,10 @@ import { z } from "zod";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 const execAsync = promisify(exec);
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { captureScreenMimeData } from "./vision.js";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { openApp, openPath, openUrl, getFrontmostAppName } from "./macos.js";
 import type { ToolCall, ToolResult } from "./schemas.js";
 import {
@@ -1158,6 +1162,88 @@ export const toolRegistry: Record<string, ToolHandler> = {
       return fail({
         observedState: `applescript_failed`,
         error: String(err?.stderr || err?.message || err)
+      });
+    }
+  },
+  click_element: async (args, opts) => {
+    const parsed = z.object({ description: z.string() }).safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "invalid args for click_element",
+        error: parsed.error.message
+      });
+    }
+
+    if (opts.dryRun) {
+      return ok(`would_click_element: description='${parsed.data.description}'`);
+    }
+
+    try {
+      console.log(`  📸 Capturing screen to locate "${parsed.data.description}"...`);
+      const mimeData = await captureScreenMimeData();
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("GEMINI_API_KEY missing");
+
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
+
+      const prompt = `Return the bounding box coordinates [ymin, xmin, ymax, xmax] for the element matching the description: "${parsed.data.description}". Only return the JSON array, no formatting.`;
+
+      const result = await model.generateContent([mimeData, { text: prompt }]);
+      const text = result.response.text().trim();
+
+      // Attempt to parse out [ ymin, xmin, ymax, xmax ] (values are 0-1000)
+      const match = text.match(/\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]/);
+      if (!match) {
+        return fail({
+          observedState: "vision_failed",
+          error: `Gemini could not find "${parsed.data.description}" or returned invalid format: ${text}`
+        });
+      }
+
+      const [_, yminStr, xminStr, ymaxStr, xmaxStr] = match;
+
+      // Note: Gemini 2.0 spatial coords are on a 1000x1000 grid representing the image
+      // We must get the actual screen dimensions from macOS to scale the click.
+      const { stdout: dims } = await execAsync(`system_profiler SPDisplaysDataType | grep Resolution`);
+
+      // Extremely naive parsing of the first resolution found (e.g. "Resolution: 2560 x 1600")
+      const resMatch = dims.match(/(\d+)\s*x\s*(\d+)/);
+      if (!resMatch) {
+        throw new Error("Could not detect screen resolution");
+      }
+
+      const screenW = parseInt(resMatch[1], 10);
+      const screenH = parseInt(resMatch[2], 10);
+
+      const ymin = parseInt(yminStr, 10);
+      const xmin = parseInt(xminStr, 10);
+      const ymax = parseInt(ymaxStr, 10);
+      const xmax = parseInt(xmaxStr, 10);
+
+      // Center of bounding box on 1000x1000 grid
+      const cx1000 = xmin + ((xmax - xmin) / 2);
+      const cy1000 = ymin + ((ymax - ymin) / 2);
+
+      // Scale to screen
+      // Important: Mac coordinates are often logical, but let's try physical pixels first, 
+      // or we might need to divide by 2 for Retina. Let's start with native dimensions.
+      const targetX = Math.round((cx1000 / 1000) * screenW);
+      const targetY = Math.round((cy1000 / 1000) * screenH);
+
+      const dir = dirname(fileURLToPath(import.meta.url));
+      const jarvisMousePath = resolve(dir, "..", "assets", "jarvis-mouse");
+
+      console.log(`  🖱️  Clicking at ${targetX}, ${targetY}`);
+      await execAsync(`"${jarvisMousePath}" ${targetX} ${targetY} --click`);
+
+      return ok(`clicked_element: ${parsed.data.description} at ${targetX}, ${targetY}`);
+
+    } catch (err: any) {
+      return fail({
+        observedState: `click_element_failed`,
+        error: String(err?.message || err)
       });
     }
   }

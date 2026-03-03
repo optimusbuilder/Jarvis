@@ -61,6 +61,7 @@ ACCESSIBILITY TOOLS (macOS UI automation):
 
 MACOS CONTROL:
 - execute_applescript(script) — Executes AppleScript on the user's Mac to control applications, system settings (volume, brightness), media playback, or open apps. Use this for ANY system control request like "turn up volume", "mute", "play music", "open Spotify".
+- click_element(description) — Visually locate and click an OS-level button, icon, or text on the screen. \`description\` should be exactly what it looks like (e.g. "Safari icon in dock", "Login button", "the red submit button").
 
 BROWSER TOOLS:
 - browser_go(url) — Navigate to URL in automation browser
@@ -141,8 +142,9 @@ function tryLocalPlan(transcript: string): ActionPlan | null {
     const lower = transcript.toLowerCase().trim();
 
     // ── Vision bypass ──
-    // If the user asks about the screen, force Gemini API for multimodal analysis
-    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this)\b/.test(lower);
+    // If the user asks about the screen or asks to click/interact with something on screen,
+    // force Gemini API for multimodal analysis.
+    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this|click|tap|select)\b/.test(lower);
     if (isScreenQuery) {
         return null;
     }
@@ -365,9 +367,9 @@ export async function planWithGemini(args: {
 
     const promptParts: Part[] = [{ text: promptString }];
 
-    // Detect if the user is asking about their screen
+    // Detect if the user is asking about their screen OR asking to click/interact
     const lower = args.transcript.toLowerCase();
-    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this)\b/.test(lower);
+    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this|click|tap|select)\b/.test(lower);
 
     if (isScreenQuery) {
         try {
