@@ -58,6 +58,22 @@ function withVerifiedObservedState(toolName: string, result: ToolResult): ToolRe
   });
 }
 
+/** Simple bigram similarity for fuzzy matching app names (0-1 score) */
+function fuzzyScore(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return a === b ? 1 : 0;
+  const bigrams = (s: string): Set<string> => {
+    const bg = new Set<string>();
+    for (let i = 0; i < s.length - 1; i++) bg.add(s.slice(i, i + 2));
+    return bg;
+  };
+  const bg1 = bigrams(a);
+  const bg2 = bigrams(b);
+  let intersection = 0;
+  for (const b of bg1) if (bg2.has(b)) intersection++;
+  return (2 * intersection) / (bg1.size + bg2.size);
+}
+
 const openAppArgs = z.object({ name: z.string().min(1) });
 const openPathArgs = z.object({ path: z.string().min(1) });
 const openUrlArgs = z.object({ url: z.string().url() });
@@ -531,9 +547,47 @@ export const toolRegistry: Record<string, ToolHandler> = {
       });
     }
     if (opts.dryRun) return ok(`dry_run: would open app '${parsed.data.name}'`);
-    await openApp(parsed.data.name);
-    const front = await getFrontmostAppName();
-    return ok(`opened app '${parsed.data.name}'; frontmost=${front ?? "unknown"}`);
+    try {
+      await openApp(parsed.data.name);
+      const front = await getFrontmostAppName();
+      return ok(`opened app '${parsed.data.name}'; frontmost=${front ?? "unknown"}`);
+    } catch (error) {
+      // App not found — try fuzzy matching with Spotlight
+      try {
+        const { execFile: ef } = await import("node:child_process");
+        const { promisify: pm } = await import("node:util");
+        const execFileAsync = pm(ef);
+        const { stdout } = await execFileAsync("mdfind", [
+          "kMDItemKind == 'Application'"
+        ], { timeout: 5000 });
+
+        const appNames = stdout.trim().split("\n")
+          .map(p => p.split("/").pop()?.replace(/\.app$/, "") ?? "")
+          .filter(Boolean);
+
+        // Find best fuzzy match
+        const queryLower = parsed.data.name.toLowerCase();
+        const matches = appNames
+          .map(name => ({
+            name,
+            score: fuzzyScore(queryLower, name.toLowerCase()),
+          }))
+          .filter(m => m.score > 0.5)
+          .sort((a, b) => b.score - a.score);
+
+        if (matches.length > 0) {
+          const bestApp = matches[0].name;
+          await openApp(bestApp);
+          const front = await getFrontmostAppName();
+          return ok(`opened app '${bestApp}' (fuzzy match for '${parsed.data.name}'); frontmost=${front ?? "unknown"}`);
+        }
+      } catch { /* fuzzy search failed, fall through */ }
+
+      return fail({
+        observedState: `open_app_failed: name='${parsed.data.name}'`,
+        error: `Could not find application '${parsed.data.name}'`
+      });
+    }
   },
 
   async open_path(args, opts) {

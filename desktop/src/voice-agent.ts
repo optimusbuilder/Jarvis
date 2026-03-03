@@ -227,8 +227,15 @@ async function handleWakeWord(): Promise<void> {
         }
 
         if (plan.tool_calls.length === 0) {
-            console.log("  ⚠️  No actions to take.");
-            await speakResponse("I'm not sure what to do with that command.");
+            if (plan.spoken_response) {
+                // Q&A mode — just speak the answer
+                console.log("  💬 Answering question...");
+                tray.updateState({ status: "speaking", lastResponse: plan.spoken_response });
+                await speakResponse(plan.spoken_response);
+            } else {
+                console.log("  ⚠️  No actions to take.");
+                await speakResponse("I'm not sure what to do with that command.");
+            }
             return;
         }
 
@@ -287,7 +294,159 @@ async function handleWakeWord(): Promise<void> {
         tray.updateState({ status: "idle" });
         console.log("");
 
-        // Restart the wake word listener
+        // ── Follow-up window: stay awake for 20s ──
+        await startFollowUpWindow();
+    }
+}
+
+const FOLLOW_UP_TIMEOUT_MS = 20_000;
+
+/** After a command, stay awake and listen for follow-up commands for 20s. */
+async function startFollowUpWindow(): Promise<void> {
+    console.log(`  ⏱️  Listening for follow-up (${FOLLOW_UP_TIMEOUT_MS / 1000}s)...`);
+    tray.updateState({ status: "listening" });
+
+    // Play a subtle tone to indicate we're still listening
+    playSound("/System/Library/Sounds/Tink.aiff");
+
+    try {
+        const recording = await recordWithVAD({
+            silenceThreshold: 0.015,
+            silenceDurationMs: 1500,
+            maxDurationMs: 15000,
+            minDurationMs: 800,
+            // Wait up to FOLLOW_UP_TIMEOUT_MS for speech to start
+            initialSilenceTimeoutMs: FOLLOW_UP_TIMEOUT_MS,
+        });
+
+        // If no speech was detected during the window, go back to wake word
+        if (!recording || recording.durationMs < 500) {
+            console.log("  ⏱️  No follow-up detected. Returning to wake word mode.");
+            console.log("");
+            console.log("🎙️  AURA is listening for wake word...");
+            listener.start(onWakeWordDetected);
+            return;
+        }
+
+        const durationSec = (recording.durationMs / 1000).toFixed(1);
+        console.log(`  ✅ Follow-up recorded: ${durationSec}s`);
+
+        // Process this follow-up command through the full pipeline
+        isProcessingCommand = true;
+
+        // Transcribe
+        tray.updateState({ status: "transcribing" });
+        console.log("  🧠 Transcribing...");
+
+        let transcript = "";
+        let sttEngine = "whisper";
+
+        const appleResult = await transcribeWithAppleSpeech(recording.audioPath);
+        if (appleResult && appleResult.transcript.trim()) {
+            transcript = appleResult.transcript;
+            sttEngine = "apple_speech";
+            console.log(`  🍎 Apple Speech (${(appleResult.durationMs / 1000).toFixed(1)}s)`);
+        } else {
+            console.log("  ⤵️  Falling back to Whisper...");
+            transcript = await transcribeWithWhisperCpp({
+                env: {
+                    WHISPER_CPP_BIN: whisperBin,
+                    WHISPER_MODEL_PATH: whisperModel,
+                    WHISPER_DEFAULT_LANGUAGE: whisperLanguage,
+                    WHISPER_TIMEOUT_MS: whisperTimeoutMs,
+                    WHISPER_NO_GPU: whisperNoGpu,
+                } as any,
+                audioPath: recording.audioPath,
+                language: whisperLanguage,
+            });
+        }
+
+        if (!transcript.trim() || transcript.trim() === "[BLANK_AUDIO]") {
+            console.log("  ⚠️  No speech detected. Returning to wake word mode.");
+            console.log("");
+            console.log("🎙️  AURA is listening for wake word...");
+            listener.start(onWakeWordDetected);
+            return;
+        }
+
+        console.log(`  📝 Transcript (${sttEngine}): "${transcript}"`);
+        tray.updateState({ lastTranscript: transcript });
+
+        // Plan
+        tray.updateState({ status: "planning" });
+        console.log("  🤖 Planning...");
+        const plan = await planCommand({
+            transcript,
+            geminiApiKey: geminiApiKey || undefined,
+            model: geminiModel,
+        });
+
+        console.log(`  🎯 Goal: ${plan.goal}`);
+
+        if (plan.questions.length > 0) {
+            for (const q of plan.questions) console.log(`     - ${q}`);
+            await speakResponse(plan.questions[0]);
+            isProcessingCommand = false;
+            tray.updateState({ status: "idle" });
+            // Start another follow-up window after answering a question
+            await startFollowUpWindow();
+            return;
+        }
+
+        if (plan.tool_calls.length === 0) {
+            if (plan.spoken_response) {
+                console.log("  💬 Answering...");
+                tray.updateState({ status: "speaking", lastResponse: plan.spoken_response });
+                await speakResponse(plan.spoken_response);
+            } else {
+                await speakResponse("I'm not sure what to do with that.");
+            }
+            isProcessingCommand = false;
+            tray.updateState({ status: "idle" });
+            await startFollowUpWindow();
+            return;
+        }
+
+        // Execute
+        tray.updateState({ status: "executing", lastAction: plan.goal });
+        console.log(`  🔧 Executing ${plan.tool_calls.length} tool call(s)...`);
+
+        let allSucceeded = true;
+        for (let i = 0; i < plan.tool_calls.length; i++) {
+            const call = plan.tool_calls[i];
+            const stepLabel = `[${i + 1}/${plan.tool_calls.length}]`;
+            console.log(`  ${stepLabel} ${call.name}(${JSON.stringify(call.args)})`);
+            const result = await executeToolCall({ call: { name: call.name, args: call.args }, dryRun: false });
+            if (result.result.success) {
+                console.log(`  ${stepLabel} ✅ ${result.result.observed_state}`);
+            } else {
+                console.log(`  ${stepLabel} ❌ ${result.result.error ?? "unknown error"}`);
+                allSucceeded = false;
+            }
+        }
+
+        console.log("");
+        if (allSucceeded) {
+            console.log("  ✅ All actions completed!");
+            const response = plan.spoken_response ?? "Done.";
+            tray.updateState({ status: "speaking", lastResponse: response });
+            await speakResponse(response);
+        } else {
+            tray.updateState({ status: "speaking", lastResponse: "Some actions failed" });
+            await speakResponse("Some actions failed.");
+        }
+
+        isProcessingCommand = false;
+        tray.updateState({ status: "idle" });
+        // Start another follow-up window
+        await startFollowUpWindow();
+
+    } catch (error) {
+        console.warn(`  ⏱️  Follow-up error: ${String(error)}`);
+        // Go back to wake word mode
+        console.log("");
+        console.log("🎙️  AURA is listening for wake word...");
+        isProcessingCommand = false;
         listener.start(onWakeWordDetected);
     }
 }

@@ -70,7 +70,7 @@ RULES:
 2. For "open my documents/desktop/downloads" → use open_path with ~/Documents, ~/Desktop, ~/Downloads
 3. For web searches → use open_url with a Google search URL: https://www.google.com/search?q=...
 4. For "go to youtube.com" → use open_url with the full URL: https://youtube.com
-5. spoken_response should be a SHORT natural confirmation (1 sentence max)
+5. spoken_response should be natural and conversational. For action commands, keep it short (1 sentence). For questions, provide a helpful answer (2-4 sentences max).
 6. Never include markdown. Never include explanations outside JSON.
 7. If the command is ambiguous, add a question to "questions" instead of guessing.
 8. Use multiple tool_calls when the user asks for multiple things.
@@ -79,7 +79,12 @@ RULES:
    - "open the readme file" → find_and_open(query="readme")
    - "open my budget spreadsheet" → find_and_open(query="budget")
    - "open the 2 Sigma cheat sheets in downloads" → find_and_open(query="2 Sigma cheat sheets", root="Downloads")
-10. Only use open_path with ~ tilde paths for the TOP-LEVEL well-known folders: ~/Documents, ~/Desktop, ~/Downloads.`;
+10. Only use open_path with ~ tilde paths for the TOP-LEVEL well-known folders: ~/Documents, ~/Desktop, ~/Downloads.
+11. QUESTIONS & CONVERSATION: If the user asks a question (not a command), respond with an answer in spoken_response and leave tool_calls empty.
+    - "What is the current price of bitcoin?" → spoken_response: "Bitcoin is currently trading at around $XX,XXX, though I'd recommend checking a live tracker for the most up-to-date price."
+    - "What time is it in Tokyo?" → spoken_response: "It's currently about X:XX AM/PM in Tokyo, Japan."
+    - "Tell me a joke" → spoken_response: (a short joke)
+    Use your knowledge to answer factual questions. For real-time data you cannot know, suggest the user check online.`;
 
 // ── Local Fallback Planner ──────────────────────────
 
@@ -347,8 +352,8 @@ export async function planWithGemini(args: {
             : undefined,
     };
 
-    // Fail-closed: if no tool calls and no questions, something went wrong
-    if (actionPlan.tool_calls.length === 0 && actionPlan.questions.length === 0) {
+    // Fail-closed: if no tool calls, no questions, AND no spoken response, something went wrong
+    if (actionPlan.tool_calls.length === 0 && actionPlan.questions.length === 0 && !actionPlan.spoken_response?.trim()) {
         actionPlan.questions.push("I couldn't determine what to do. Could you rephrase your command?");
     }
 

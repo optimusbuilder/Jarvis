@@ -27,6 +27,8 @@ export type VADConfig = {
     sampleRate?: number;
     /** Audio input device index, -1 = default */
     deviceIndex?: number;
+    /** Max time (ms) to wait for speech to start. If no speech detected before this, return null. Used for follow-up window. */
+    initialSilenceTimeoutMs?: number;
 };
 
 export type VADResult = {
@@ -110,6 +112,7 @@ export async function recordWithVAD(config: VADConfig = {}): Promise<VADResult> 
     const minDurationMs = config.minDurationMs ?? 500;
     const sampleRate = config.sampleRate ?? 16000;
     const deviceIndex = config.deviceIndex ?? -1;
+    const initialSilenceTimeoutMs = config.initialSilenceTimeoutMs ?? 0;
 
     // PvRecorder frame length — 512 samples at 16kHz = 32ms per frame
     const frameLength = 512;
@@ -120,6 +123,7 @@ export async function recordWithVAD(config: VADConfig = {}): Promise<VADResult> 
     let totalSamples = 0;
     let silenceStartMs: number | null = null;
     let stoppedBySilence = false;
+    let speechDetected = false;
 
     const startedAt = Date.now();
 
@@ -141,13 +145,27 @@ export async function recordWithVAD(config: VADConfig = {}): Promise<VADResult> 
                 }
                 const silentFor = Date.now() - silenceStartMs;
 
-                // Only apply silence cutoff after minimum duration
-                if (elapsedMs >= minDurationMs && silentFor >= silenceDurationMs) {
+                // If waiting for initial speech and timeout is set, check it
+                if (!speechDetected && initialSilenceTimeoutMs > 0 && elapsedMs >= initialSilenceTimeoutMs) {
+                    // No speech was detected within the follow-up window
+                    recorder.stop();
+                    recorder.release();
+                    return {
+                        audioPath: "",
+                        durationMs: 0,
+                        bytes: 0,
+                        stoppedBySilence: true,
+                    };
+                }
+
+                // Only apply silence cutoff after minimum duration AND speech was detected
+                if (speechDetected && elapsedMs >= minDurationMs && silentFor >= silenceDurationMs) {
                     stoppedBySilence = true;
                     break;
                 }
             } else {
                 // Speech detected, reset silence timer
+                speechDetected = true;
                 silenceStartMs = null;
             }
 
