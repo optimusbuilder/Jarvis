@@ -94,6 +94,9 @@ const trashPathArgs = z.object({ path: z.string().min(1) });
 const confirmActionArgs = z.object({
   reason: z.string().min(3).max(300)
 });
+const webSearchArgs = z.object({
+  query: z.string().min(1).max(500),
+});
 const focusAppArgs = z.object({ name: z.string().min(1).max(200) });
 const clickMenuArgs = z.object({
   menu_path: z.array(z.string().min(1).max(120)).min(2).max(8),
@@ -1061,6 +1064,72 @@ export const toolRegistry: Record<string, ToolHandler> = {
       return fail({
         observedState: `find_and_open_failed: query='${parsed.data.query}'`,
         error
+      });
+    }
+  },
+
+  async web_search(args, opts) {
+    const parsed = webSearchArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for web_search",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would search web for '${parsed.data.query}'`);
+
+    const apiKey = process.env.TAVILY_API_KEY;
+    if (!apiKey) {
+      return fail({
+        observedState: "web_search_failed: no API key",
+        error: "TAVILY_API_KEY not configured in .env"
+      });
+    }
+
+    try {
+      const response = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query: parsed.data.query,
+          search_depth: "basic",
+          max_results: 5,
+          include_answer: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return fail({
+          observedState: `web_search_failed: HTTP ${response.status}`,
+          error: `Tavily API error: ${response.status} — ${errorText.slice(0, 200)}`
+        });
+      }
+
+      const data = await response.json() as {
+        answer?: string;
+        results?: Array<{ title: string; url: string; content: string }>;
+      };
+
+      // Build a concise summary for TTS
+      let summary = "";
+      if (data.answer) {
+        summary = data.answer;
+      } else if (data.results && data.results.length > 0) {
+        summary = data.results
+          .slice(0, 3)
+          .map((r, i) => `${i + 1}. ${r.title}: ${r.content.slice(0, 150)}`)
+          .join(" | ");
+      } else {
+        summary = "No results found for that search.";
+      }
+
+      return ok(`web_search_ok: ${summary}`);
+    } catch (error) {
+      return fail({
+        observedState: `web_search_failed: query='${parsed.data.query}'`,
+        error: String(error)
       });
     }
   }

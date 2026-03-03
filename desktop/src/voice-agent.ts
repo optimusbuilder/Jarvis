@@ -245,6 +245,7 @@ async function handleWakeWord(): Promise<void> {
         // ── Execute tool calls ──
         let allSucceeded = true;
         const results: string[] = [];
+        let webSearchAnswer = "";
         for (let i = 0; i < plan.tool_calls.length; i++) {
             const call = plan.tool_calls[i];
 
@@ -266,6 +267,11 @@ async function handleWakeWord(): Promise<void> {
             if (result.result.success) {
                 console.log(`  ${stepLabel} ✅ ${result.result.observed_state}`);
                 results.push(`${call.name}: success`);
+                // Capture web_search results for speaking
+                if (call.name === "web_search" && result.result.observed_state) {
+                    const webAnswer = result.result.observed_state.replace(/^web_search_ok:\s*/, "");
+                    if (webAnswer) webSearchAnswer = webAnswer;
+                }
             } else {
                 console.log(`  ${stepLabel} ❌ ${result.result.error ?? "unknown error"}`);
                 allSucceeded = false;
@@ -277,7 +283,8 @@ async function handleWakeWord(): Promise<void> {
         console.log("");
         if (allSucceeded) {
             console.log("  ✅ All actions completed successfully!");
-            const response = plan.spoken_response ?? "Done.";
+            // For web searches, speak the actual search results
+            const response = webSearchAnswer || plan.spoken_response || "Done.";
             tray.updateState({ status: "speaking", lastResponse: response });
             await speakResponse(response);
         } else {
@@ -412,6 +419,7 @@ async function startFollowUpWindow(): Promise<void> {
         console.log(`  🔧 Executing ${plan.tool_calls.length} tool call(s)...`);
 
         let allSucceeded = true;
+        let webSearchAnswer = "";
         for (let i = 0; i < plan.tool_calls.length; i++) {
             const call = plan.tool_calls[i];
             const stepLabel = `[${i + 1}/${plan.tool_calls.length}]`;
@@ -419,6 +427,10 @@ async function startFollowUpWindow(): Promise<void> {
             const result = await executeToolCall({ call: { name: call.name, args: call.args }, dryRun: false });
             if (result.result.success) {
                 console.log(`  ${stepLabel} ✅ ${result.result.observed_state}`);
+                if (call.name === "web_search" && result.result.observed_state) {
+                    const webAnswer = result.result.observed_state.replace(/^web_search_ok:\s*/, "");
+                    if (webAnswer) webSearchAnswer = webAnswer;
+                }
             } else {
                 console.log(`  ${stepLabel} ❌ ${result.result.error ?? "unknown error"}`);
                 allSucceeded = false;
@@ -428,7 +440,7 @@ async function startFollowUpWindow(): Promise<void> {
         console.log("");
         if (allSucceeded) {
             console.log("  ✅ All actions completed!");
-            const response = plan.spoken_response ?? "Done.";
+            const response = webSearchAnswer || plan.spoken_response || "Done.";
             tray.updateState({ status: "speaking", lastResponse: response });
             await speakResponse(response);
         } else {

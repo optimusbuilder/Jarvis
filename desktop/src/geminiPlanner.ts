@@ -50,6 +50,7 @@ SYSTEM TOOLS (macOS):
 - trash_path(path) — Move to trash (requires confirm_action first)
 - confirm_action(reason) — Grant confirmation for destructive actions
 - find_and_open(query, root?) — Search for a file/folder by name and open the best match. "root" is optional (e.g. "Documents")
+- web_search(query) — Search the internet using Tavily. Use for real-time info: prices, news, weather, sports, current events, facts you're unsure about
 
 ACCESSIBILITY TOOLS (macOS UI automation):
 - focus_app(name) — Focus/activate an application window
@@ -80,11 +81,17 @@ RULES:
    - "open my budget spreadsheet" → find_and_open(query="budget")
    - "open the 2 Sigma cheat sheets in downloads" → find_and_open(query="2 Sigma cheat sheets", root="Downloads")
 10. Only use open_path with ~ tilde paths for the TOP-LEVEL well-known folders: ~/Documents, ~/Desktop, ~/Downloads.
-11. QUESTIONS & CONVERSATION: If the user asks a question (not a command), respond with an answer in spoken_response and leave tool_calls empty.
-    - "What is the current price of bitcoin?" → spoken_response: "Bitcoin is currently trading at around $XX,XXX, though I'd recommend checking a live tracker for the most up-to-date price."
-    - "What time is it in Tokyo?" → spoken_response: "It's currently about X:XX AM/PM in Tokyo, Japan."
-    - "Tell me a joke" → spoken_response: (a short joke)
-    Use your knowledge to answer factual questions. For real-time data you cannot know, suggest the user check online.`;
+11. QUESTIONS & CONVERSATION: If the user asks a question:
+    - For REAL-TIME info (prices, news, weather, scores, current events) → use web_search(query) tool and set spoken_response to summarize the results.
+      Examples:
+      - "What's the price of bitcoin?" → web_search(query="current price of bitcoin"), spoken_response: "Let me look that up for you."
+      - "What's the weather in New York?" → web_search(query="weather in New York today")
+      - "Who won the Super Bowl?" → web_search(query="Super Bowl winner 2026")
+    - For GENERAL KNOWLEDGE (definitions, how-to, opinions, jokes) → answer directly in spoken_response with empty tool_calls.
+      Examples:
+      - "Tell me a joke" → empty tool_calls, spoken_response: (a joke)
+      - "What is photosynthesis?" → empty tool_calls, spoken_response: (explanation)
+    Use your knowledge to answer factual questions. For anything time-sensitive or you're unsure about, use web_search.`;
 
 // ── Local Fallback Planner ──────────────────────────
 
