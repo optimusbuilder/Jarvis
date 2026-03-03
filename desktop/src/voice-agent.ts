@@ -90,7 +90,15 @@ function playSound(soundFile: string): void {
 }
 
 function playListeningChime(): void {
-    playSound("/System/Library/Sounds/Tink.aiff");
+    // Custom two-tone rising chime (880Hz → 1320Hz, 200ms)
+    const chimePath = resolve(__dirname, "..", "assets", "wake-chime.wav");
+    playSound(chimePath);
+}
+
+function playFollowUpChime(): void {
+    // Softer, shorter chime for follow-up listening
+    const chimePath = resolve(__dirname, "..", "assets", "followup-chime.wav");
+    playSound(chimePath);
 }
 
 function playErrorSound(): void {

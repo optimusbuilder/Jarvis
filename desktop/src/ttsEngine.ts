@@ -51,8 +51,8 @@ async function speakWithElevenLabs(args: {
         },
         body: JSON.stringify({
             text: args.text,
-            model_id: args.modelId ?? "eleven_flash_v2_5",
-            voice_settings: { stability: 0.3, similarity_boost: 0.8 },
+            model_id: args.modelId ?? "eleven_turbo_v2_5",
+            voice_settings: { stability: 0.3, similarity_boost: 0.8, speed: 1.15 },
             optimize_streaming_latency: 3, // max optimization
         }),
     });
