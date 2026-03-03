@@ -12,6 +12,7 @@
 import { loadLocalDotenv } from "./localDotenv.js";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
 import { recordWithVAD } from "./vad.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
@@ -84,11 +85,11 @@ const listener = createWakeWordListener({
 
 // ── Play system sound ───────────────────────────────
 function playSound(soundFile: string): void {
-    if (process.platform === "darwin") {
-        import("node:child_process").then(({ execFile }) => {
-            execFile("afplay", [soundFile], () => { });
-        });
-    }
+    if (process.platform !== "darwin") return;
+    const child = spawn("afplay", [soundFile], { stdio: "ignore" });
+    child.on("error", (err: Error) => {
+        console.warn(`  ⚠️  Sound failed: ${soundFile} — ${err.message}`);
+    });
 }
 
 function playListeningChime(): void {
@@ -141,6 +142,9 @@ async function handleWakeWord(): Promise<void> {
 
     // Stop the wake word listener to release the microphone
     listener.stop();
+
+    // Small delay to let audio device fully release, then play chime
+    await new Promise(r => setTimeout(r, 100));
     playListeningChime();
 
     try {

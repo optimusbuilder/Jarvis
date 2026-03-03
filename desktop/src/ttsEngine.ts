@@ -29,6 +29,46 @@ export type TTSResult = {
 };
 
 /**
+ * Pre-process text for natural TTS output.
+ * Converts numbers, symbols, and formatting into spoken-friendly text.
+ */
+function formatForSpeech(text: string): string {
+    let out = text;
+
+    // Currency: $66,666.48 → "66,666 dollars and 48 cents"
+    out = out.replace(/\$([0-9,]+)\.(\d{2})/g, (_m, dollars, cents) => {
+        return `${dollars} dollars and ${cents} cents`;
+    });
+    // Currency without cents: $69,400 → "69,400 dollars"
+    out = out.replace(/\$([0-9,]+)(?!\.\d)/g, (_m, dollars) => {
+        return `${dollars} dollars`;
+    });
+
+    // Percentages: 5% → "5 percent"
+    out = out.replace(/(\d+(?:\.\d+)?)%/g, "$1 percent");
+
+    // Common symbols
+    out = out.replace(/&/g, " and ");
+    out = out.replace(/@/g, " at ");
+    out = out.replace(/#(\d+)/g, "number $1");
+    out = out.replace(/\+/g, " plus ");
+
+    // Dates: 2026-03-03 → "March 3rd, 2026"
+    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    out = out.replace(/(\d{4})-(\d{2})-(\d{2})/g, (_m, year, month, day) => {
+        const mo = months[parseInt(month, 10) - 1] || month;
+        const d = parseInt(day, 10);
+        const suffix = d === 1 || d === 21 || d === 31 ? "st" : d === 2 || d === 22 ? "nd" : d === 3 || d === 23 ? "rd" : "th";
+        return `${mo} ${d}${suffix}, ${year}`;
+    });
+
+    // Trim double spaces
+    out = out.replace(/\s{2,}/g, " ").trim();
+
+    return out;
+}
+
+/**
  * Speak text using ElevenLabs TTS with STREAMING playback.
  * Pipes audio chunks directly to ffplay — first words heard in ~500ms.
  */
@@ -39,6 +79,7 @@ async function speakWithElevenLabs(args: {
     modelId?: string;
 }): Promise<TTSResult> {
     const startMs = Date.now();
+    const formattedText = formatForSpeech(args.text);
 
     // Use the STREAMING endpoint
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(args.voiceId)}/stream`;
@@ -50,7 +91,7 @@ async function speakWithElevenLabs(args: {
             accept: "audio/mpeg",
         },
         body: JSON.stringify({
-            text: args.text,
+            text: formattedText,
             model_id: args.modelId ?? "eleven_turbo_v2_5",
             voice_settings: { stability: 0.3, similarity_boost: 0.8, speed: 1.15 },
             optimize_streaming_latency: 3, // max optimization
