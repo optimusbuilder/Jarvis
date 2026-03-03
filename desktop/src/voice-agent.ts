@@ -22,6 +22,7 @@ import { executeToolCall } from "./tools.js";
 import { speak, type TTSConfig } from "./ttsEngine.js";
 import { startTray } from "./trayMenu.js";
 import { addUserTurn, addAssistantTurn, getConversationContext, compactIfNeeded } from "./conversationMemory.js";
+import { showOverlay, dismissOverlay } from "./overlay.js";
 
 // Load environment variables
 loadLocalDotenv();
@@ -113,10 +114,13 @@ async function speakResponse(text: string): Promise<void> {
     if (!text.trim()) return;
     try {
         console.log(`  🔊 Speaking: "${text}"`);
+        showOverlay({ text, dismissAfterSec: 30 });
         const result = await speak({ text, config: ttsConfig });
         console.log(`  🔊 TTS: ${result.engine} (${(result.durationMs / 1000).toFixed(1)}s)`);
+        dismissOverlay();
     } catch (error) {
         console.warn(`  ⚠️  TTS failed: ${String(error)}`);
+        dismissOverlay();
     }
 }
 
