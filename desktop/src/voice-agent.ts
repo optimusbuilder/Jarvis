@@ -13,6 +13,7 @@ import { loadLocalDotenv } from "./localDotenv.js";
 import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
 import { recordWithVAD } from "./vad.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
+import { transcribeWithAppleSpeech } from "./appleSpeech.js";
 import { planCommand } from "./geminiPlanner.js";
 import { executeToolCall } from "./tools.js";
 import { speak, type TTSConfig } from "./ttsEngine.js";
@@ -146,28 +147,42 @@ async function handleWakeWord(): Promise<void> {
         const stoppedBy = recording.stoppedBySilence ? "silence detected" : "max duration";
         console.log(`  ✅ Recorded ${durationSec}s (${stoppedBy})`);
 
-        // ── Transcribe with whisper ──
+        // ── Transcribe ── Apple Speech (primary) + Whisper (fallback)
         tray.updateState({ status: "transcribing" });
         console.log("  🧠 Transcribing...");
-        const transcript = await transcribeWithWhisperCpp({
-            env: {
-                WHISPER_CPP_BIN: whisperBin,
-                WHISPER_MODEL_PATH: whisperModel,
-                WHISPER_DEFAULT_LANGUAGE: whisperLanguage,
-                WHISPER_TIMEOUT_MS: whisperTimeoutMs,
-                WHISPER_NO_GPU: whisperNoGpu,
-            } as any,
-            audioPath: recording.audioPath,
-            language: whisperLanguage,
-        });
 
-        if (!transcript.trim()) {
+        let transcript = "";
+        let sttEngine = "whisper";
+
+        // Try Apple Speech Framework first
+        const appleResult = await transcribeWithAppleSpeech(recording.audioPath);
+        if (appleResult && appleResult.transcript.trim()) {
+            transcript = appleResult.transcript;
+            sttEngine = "apple_speech";
+            console.log(`  🍎 Apple Speech (${(appleResult.durationMs / 1000).toFixed(1)}s)`);
+        } else {
+            // Fall back to whisper.cpp
+            console.log("  ⤵️  Falling back to Whisper...");
+            transcript = await transcribeWithWhisperCpp({
+                env: {
+                    WHISPER_CPP_BIN: whisperBin,
+                    WHISPER_MODEL_PATH: whisperModel,
+                    WHISPER_DEFAULT_LANGUAGE: whisperLanguage,
+                    WHISPER_TIMEOUT_MS: whisperTimeoutMs,
+                    WHISPER_NO_GPU: whisperNoGpu,
+                } as any,
+                audioPath: recording.audioPath,
+                language: whisperLanguage,
+            });
+        }
+
+        if (!transcript.trim() || transcript.trim() === "[BLANK_AUDIO]") {
             console.log("  ⚠️  No speech detected. Please try again.");
             await speakResponse("I didn't catch that. Please try again.");
             return;
         }
 
-        console.log(`  📝 Transcript: "${transcript}"`);
+        console.log(`  📝 Transcript (${sttEngine}): "${transcript}"`);
         tray.updateState({ lastTranscript: transcript });
 
         // Check for kill switch voice command

@@ -871,63 +871,127 @@ export const toolRegistry: Record<string, ToolHandler> = {
       const query = parsed.data.query;
       const root = parsed.data.root;
 
-      // Use macOS Spotlight (mdfind) for searching — fast and indexes everything
       const { execFile } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFileAsync = promisify(execFile);
 
-      // Build mdfind query: search by display name
-      const mdfindQuery = `kMDItemDisplayName == "*${query}*"cd`;
-      let matches: string[] = [];
+      const searchDir = root
+        ? `${process.env.HOME}/${root}`
+        : process.env.HOME ?? "";
 
+      // Generate query variants to handle transcription quirks
+      const variants = new Set<string>();
+      variants.add(query);                                    // "medical report"
+      variants.add(query.replace(/\s+/g, "_"));              // "medical_report"
+      variants.add(query.replace(/\s+/g, ""));               // "medicalreport"
+      // Also try individual words for partial matching
+      const words = query.split(/\s+/).filter(w => w.length > 2);
+
+      let allMatches: string[] = [];
+
+      // Strategy 1: Search by filesystem name (handles underscores)
+      for (const variant of variants) {
+        try {
+          const { stdout } = await execFileAsync("mdfind", [
+            "-onlyin", searchDir,
+            `kMDItemFSName == "*${variant}*"cd`
+          ], { timeout: 5000 });
+          const results = stdout.trim().split("\n").filter(Boolean);
+          allMatches.push(...results);
+        } catch { /* continue */ }
+      }
+
+      // Strategy 2: Also search by display name
       try {
-        // If root is specified, scope the search to that folder
-        const searchDir = root
-          ? `${process.env.HOME}/${root}`
-          : process.env.HOME ?? "";
-
         const { stdout } = await execFileAsync("mdfind", [
           "-onlyin", searchDir,
-          mdfindQuery
+          `kMDItemDisplayName == "*${query}*"cd`
         ], { timeout: 5000 });
+        const results = stdout.trim().split("\n").filter(Boolean);
+        allMatches.push(...results);
+      } catch { /* continue */ }
 
-        matches = stdout.trim().split("\n").filter(Boolean).slice(0, 20);
-      } catch {
-        // mdfind failed, fall back to searchFiles
+      // Strategy 3: Full text name search (catches more results)
+      try {
+        const { stdout } = await execFileAsync("mdfind", [
+          "-onlyin", searchDir,
+          `-name "${query}"`
+        ], { timeout: 5000 });
+        const results = stdout.trim().split("\n").filter(Boolean);
+        allMatches.push(...results);
+      } catch { /* continue */ }
+
+      // Deduplicate
+      allMatches = [...new Set(allMatches)];
+
+      // Filter out junk paths (node_modules, .git, dist, build, etc.)
+      const junkPatterns = [
+        /\/node_modules\//i,
+        /\/\.git\//i,
+        /\/dist\//i,
+        /\/build\//i,
+        /\/\.next\//i,
+        /\/\.cache\//i,
+        /\/\.swc\//i,
+        /\/vendor\//i,
+      ];
+      allMatches = allMatches.filter(m =>
+        !junkPatterns.some(pattern => pattern.test(m))
+      );
+
+      // Fallback to custom searcher
+      if (allMatches.length === 0) {
         const result = await searchFiles({ query, limit: 10 });
-        matches = result.matches;
+        allMatches = result.matches.filter(m =>
+          !junkPatterns.some(pattern => pattern.test(m))
+        );
       }
 
-      // Also try the custom searcher as a fallback if Spotlight returned nothing
-      if (matches.length === 0) {
-        const result = await searchFiles({ query, limit: 10 });
-        matches = result.matches;
-      }
-
-      if (matches.length === 0) {
+      if (allMatches.length === 0) {
         return fail({
           observedState: `find_and_open_no_results: query='${query}'`,
           error: `No files or folders found matching '${query}'`
         });
       }
 
-      // Score matches: prefer exact name match > name starts with query > partial match
+      // Score matches
       const queryLower = query.toLowerCase();
-      const scored = matches.map(m => {
+      const queryNorm = queryLower.replace(/[\s_-]+/g, ""); // normalized: no spaces/underscores
+      const scored = allMatches.map(m => {
         const name = m.split('/').pop()?.toLowerCase() ?? '';
+        const nameNorm = name.replace(/[\s_\-.]+/g, "").replace(/\.[^.]+$/, ""); // normalized
         const nameNoExt = name.replace(/\.[^.]+$/, '');
         let score = 0;
-        if (name === queryLower || nameNoExt === queryLower) score = 100;
-        else if (name.startsWith(queryLower) || nameNoExt.startsWith(queryLower)) score = 80;
+
+        // Exact match (normalized)
+        if (nameNorm === queryNorm) score = 100;
+        // Name starts with query
+        else if (nameNorm.startsWith(queryNorm)) score = 85;
+        // Name contains full query
+        else if (nameNorm.includes(queryNorm)) score = 70;
+        // Original name contains original query
         else if (name.includes(queryLower)) score = 60;
+        // Check if all query words appear in the name
+        else if (words.length > 1 && words.every(w => nameNorm.includes(w.toLowerCase()))) score = 55;
+        // At least some words match
         else score = 40;
 
         // Boost if in the specified root
-        if (root && m.toLowerCase().includes(root.toLowerCase())) score += 10;
+        if (root && m.toLowerCase().includes(`/${root.toLowerCase()}/`)) score += 10;
 
-        // Boost directories (folders) slightly
-        // Can't stat in sync, but folder names usually don't have extensions
-        if (!name.includes('.')) score += 5;
+        // Boost directories (no extension = likely folder)
+        if (!name.includes('.')) score += 8;
+
+        // Penalize deeply nested paths (prefer top-level project folders)
+        const depth = m.split('/').length;
+        score -= Math.max(0, (depth - 5) * 2);
+
+        // Boost direct children of ~/Documents, ~/Desktop, ~/Downloads
+        const homeDir = process.env.HOME ?? "";
+        const topLevel = [`${homeDir}/Documents/`, `${homeDir}/Desktop/`, `${homeDir}/Downloads/`];
+        if (topLevel.some(tl => m.startsWith(tl) && m.replace(tl, "").split("/").length <= 1)) {
+          score += 15;
+        }
 
         return { path: m, score };
       });

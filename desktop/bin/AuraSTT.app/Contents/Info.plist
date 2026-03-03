@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.aura.stt</string>
+    <key>CFBundleName</key>
+    <string>AuraSTT</string>
+    <key>CFBundleExecutable</key>
+    <string>aura-stt</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSBackgroundOnly</key>
+    <true/>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>AURA needs speech recognition to transcribe your voice commands.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>AURA needs microphone access for voice commands.</string>
+</dict>
+</plist>
