@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+const execAsync = promisify(exec);
 import { openApp, openPath, openUrl, getFrontmostAppName } from "./macos.js";
 import type { ToolCall, ToolResult } from "./schemas.js";
 import {
@@ -1130,6 +1133,31 @@ export const toolRegistry: Record<string, ToolHandler> = {
       return fail({
         observedState: `web_search_failed: query='${parsed.data.query}'`,
         error: String(error)
+      });
+    }
+  },
+  execute_applescript: async (args, opts) => {
+    const parsed = z.object({ script: z.string() }).safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "invalid args for execute_applescript",
+        error: parsed.error.message
+      });
+    }
+    if (opts.dryRun) {
+      return ok(`would_execute_applescript: script='${parsed.data.script.slice(0, 50)}...'`);
+    }
+
+    try {
+      // Escape single quotes for bash passing to osascript -e '...'
+      const safeScript = parsed.data.script.replace(/'/g, "'\\''");
+      const { stdout, stderr } = await execAsync(`osascript -e '${safeScript}'`);
+      const output = (stdout || stderr || "success").trim();
+      return ok(`applescript_executed: ${output}`);
+    } catch (err: any) {
+      return fail({
+        observedState: `applescript_failed`,
+        error: String(err?.stderr || err?.message || err)
       });
     }
   }

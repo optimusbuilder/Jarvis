@@ -85,28 +85,32 @@ const listener = createWakeWordListener({
 });
 
 // ── Play system sound ───────────────────────────────
-function playSound(soundFile: string): void {
+async function playSound(soundFile: string): Promise<void> {
     if (process.platform !== "darwin") return;
-    const child = spawn("afplay", [soundFile], { stdio: "ignore" });
-    child.on("error", (err: Error) => {
-        console.warn(`  ⚠️  Sound failed: ${soundFile} — ${err.message}`);
+    return new Promise((resolve) => {
+        const child = spawn("afplay", [soundFile], { stdio: "ignore" });
+        child.on("error", (err: Error) => {
+            console.warn(`  ⚠️  Sound failed: ${soundFile} — ${err.message}`);
+            resolve();
+        });
+        child.on("exit", () => resolve());
     });
 }
 
-function playListeningChime(): void {
-    // Custom two-tone rising chime (880Hz → 1320Hz, 200ms)
+async function playListeningChime(): Promise<void> {
+    // Custom two-tone rising chime
     const chimePath = resolve(process.cwd(), "desktop", "assets", "wake-chime.wav");
-    playSound(chimePath);
+    await playSound(chimePath);
 }
 
-function playFollowUpChime(): void {
+async function playFollowUpChime(): Promise<void> {
     // Softer, shorter chime for follow-up listening
     const chimePath = resolve(process.cwd(), "desktop", "assets", "followup-chime.wav");
-    playSound(chimePath);
+    await playSound(chimePath);
 }
 
-function playErrorSound(): void {
-    playSound("/System/Library/Sounds/Basso.aiff");
+async function playErrorSound(): Promise<void> {
+    await playSound("/System/Library/Sounds/Basso.aiff");
 }
 
 // ── Speak response ──────────────────────────────────
@@ -149,7 +153,7 @@ async function handleWakeWord(): Promise<void> {
 
     // Small delay to let audio device fully release, then play chime
     await new Promise(r => setTimeout(r, 100));
-    playListeningChime();
+    await playListeningChime();
 
     try {
         // ── Record with VAD ──
@@ -344,7 +348,7 @@ async function startFollowUpWindow(): Promise<void> {
     tray.updateState({ status: "listening" });
 
     // Play a subtle tone to indicate we're still listening
-    playFollowUpChime();
+    await playFollowUpChime();
 
     try {
         const recording = await recordWithVAD({

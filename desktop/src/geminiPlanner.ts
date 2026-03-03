@@ -58,6 +58,9 @@ ACCESSIBILITY TOOLS (macOS UI automation):
 - type_text(text) — Type text into the focused element
 - press_key(keys) — Press key combos (e.g. ["cmd+c"], ["cmd+shift+n"])
 
+MACOS CONTROL:
+- execute_applescript(script) — Executes AppleScript on the user's Mac to control applications, system settings (volume, brightness), media playback, or open apps. Use this for ANY system control request like "turn up volume", "mute", "play music", "open Spotify".
+
 BROWSER TOOLS:
 - browser_go(url) — Navigate to URL in automation browser
 - browser_search(query) — Search on current page
