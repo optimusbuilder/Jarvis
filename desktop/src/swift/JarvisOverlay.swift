@@ -6,6 +6,8 @@ let PANEL_HEIGHT: CGFloat = 160
 let CORNER_RADIUS: CGFloat = 16
 let PADDING: CGFloat = 20
 let BOTTOM_MARGIN: CGFloat = 80
+let TOP_MARGIN: CGFloat = 40
+let RIGHT_MARGIN: CGFloat = 40
 let FONT_SIZE: CGFloat = 15
 let TITLE_FONT_SIZE: CGFloat = 13
 let AUTO_DISMISS_SECONDS: Double = 30
@@ -41,10 +43,14 @@ class OverlayAppDelegate: NSObject, NSApplicationDelegate {
         }
         let screenFrame = screen.visibleFrame
 
-        // Calculate panel position (bottom center)
-        let panelX = screenFrame.origin.x + (screenFrame.width - PANEL_WIDTH) / 2
-        let panelY = screenFrame.origin.y + BOTTOM_MARGIN
-        let panelFrame = NSRect(x: panelX, y: panelY, width: PANEL_WIDTH, height: PANEL_HEIGHT)
+        // Calculate panel position (top right)
+        let panelX = screenFrame.origin.x + screenFrame.width - PANEL_WIDTH - RIGHT_MARGIN
+        let panelY = screenFrame.origin.y + screenFrame.height - PANEL_HEIGHT - TOP_MARGIN
+        
+        // Start position offset for animation
+        let startPanelY = panelY + 20
+        let panelFrame = NSRect(x: panelX, y: startPanelY, width: PANEL_WIDTH, height: PANEL_HEIGHT)
+        let finalFrame = NSRect(x: panelX, y: panelY, width: PANEL_WIDTH, height: PANEL_HEIGHT)
 
         // Create floating panel
         panel = NSPanel(
@@ -63,12 +69,16 @@ class OverlayAppDelegate: NSObject, NSApplicationDelegate {
 
         // Create visual effect view (frosted glass)
         let visualEffect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: PANEL_WIDTH, height: PANEL_HEIGHT))
-        visualEffect.material = .hudWindow
+        visualEffect.material = .popover
         visualEffect.blendingMode = .behindWindow
         visualEffect.state = .active
         visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = CORNER_RADIUS
+        visualEffect.layer?.cornerRadius = 20
         visualEffect.layer?.masksToBounds = true
+        
+        // Glowing artistic border
+        visualEffect.layer?.borderWidth = 1.0
+        visualEffect.layer?.borderColor = NSColor(white: 1.0, alpha: 0.15).cgColor
 
         // Title label (e.g. "Jarvis")
         let titleLabel = NSTextField(labelWithString: titleText)
@@ -76,18 +86,31 @@ class OverlayAppDelegate: NSObject, NSApplicationDelegate {
         titleLabel.textColor = NSColor.secondaryLabelColor
         titleLabel.frame = NSRect(x: PADDING, y: PANEL_HEIGHT - PADDING - TITLE_FONT_SIZE - 4, width: PANEL_WIDTH - 2 * PADDING, height: TITLE_FONT_SIZE + 6)
 
-        // Jarvis icon (blue circle)
+        // Jarvis icon (gradient circle)
         let iconSize: CGFloat = 28
         let iconView = NSView(frame: NSRect(x: PADDING, y: PANEL_HEIGHT - PADDING - iconSize, width: iconSize, height: iconSize))
         iconView.wantsLayer = true
         iconView.layer?.cornerRadius = iconSize / 2
-        iconView.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        
+        // Setup gradient layer
+        let gradientLayer = CAGradientLayer()
+        gradientLayer.frame = iconView.bounds
+        gradientLayer.colors = [
+            NSColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 1.0).cgColor,
+            NSColor(red: 0.8, green: 0.2, blue: 0.8, alpha: 1.0).cgColor
+        ]
+        gradientLayer.startPoint = CGPoint(x: 0.0, y: 0.0)
+        gradientLayer.endPoint = CGPoint(x: 1.0, y: 1.0)
+        iconView.layer?.addSublayer(gradientLayer)
 
         // "J" letter in the icon
         let iconLabel = NSTextField(labelWithString: "J")
         iconLabel.font = NSFont.systemFont(ofSize: 14, weight: .bold)
         iconLabel.textColor = .white
         iconLabel.alignment = .center
+        iconLabel.isBordered = false
+        iconLabel.drawsBackground = false
+        iconLabel.isEditable = false
         iconLabel.frame = NSRect(x: 0, y: 0, width: iconSize, height: iconSize)
         iconView.addSubview(iconLabel)
 
@@ -115,12 +138,15 @@ class OverlayAppDelegate: NSObject, NSApplicationDelegate {
         visualEffect.addSubview(textView)
         panel.contentView = visualEffect
 
-        // Fade in animation
+        // Slide down and fade in animation
         panel.alphaValue = 0
         panel.orderFrontRegardless()
+        
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.3
+            context.duration = 0.4
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
+            panel.animator().setFrame(finalFrame, display: true)
         }
 
         // Auto-dismiss timer

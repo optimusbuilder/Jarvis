@@ -39,6 +39,32 @@ export function createLocalPlanner(): VertexPlanner {
   return {
     async plan({ instruction }) {
       const text = normalize(instruction);
+      const lower = text; // normalized text is already lowercased and trimmed
+
+      // ── Vision bypass ──
+      const isScreenQuery = /\b(on my screen|see my screen|looking at|read this|summarize this|what is this|what's this|click|tap|select|type)\b/.test(lower);
+      if (isScreenQuery) {
+        return null; // Force LLM
+      }
+
+      // ── Question detection → route to web_search (skip LLM!) ──
+      const questionPatterns = [
+        /^(?:what|who|when|where|why|how)\b/,
+        /^(?:what's|who's|when's|where's|how's|what're|who're)\b/,
+        /^(?:is|are|was|were|do|does|did|can|could|will|would|should|has|have|had)\b.+\?*$/,
+        /^(?:tell me|tell us)\b/,
+        /^(?:explain|describe|define)\b/,
+        /\b(?:current price|price of|cost of|weather in|weather at|score of|temperature)\b/,
+      ];
+
+      if (questionPatterns.some(p => p.test(lower))) {
+        const query = text.replace(/[?.!]+$/g, "").trim();
+        return {
+          goal: `Web search: ${query}`,
+          tool_calls: [{ name: "web_search", args: { query } }],
+          questions: []
+        };
+      }
 
       // open chrome and search <query>
       const openChromeSearchMatch = text.match(
