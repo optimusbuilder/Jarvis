@@ -1186,7 +1186,7 @@ export const toolRegistry: Record<string, ToolHandler> = {
       if (!apiKey) throw new Error("GEMINI_API_KEY missing");
 
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
       const prompt = `Return the bounding box coordinates [ymin, xmin, ymax, xmax] for the element matching the description: "${parsed.data.description}". Only return the JSON array, no formatting.`;
 

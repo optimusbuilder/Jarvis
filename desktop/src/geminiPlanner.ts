@@ -144,7 +144,7 @@ function tryLocalPlan(transcript: string): ActionPlan | null {
     // ── Vision bypass ──
     // If the user asks about the screen or asks to click/interact with something on screen,
     // force Gemini API for multimodal analysis.
-    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this|click|tap|select)\b/.test(lower);
+    const isScreenQuery = /\b(on my screen|see my screen|looking at|read this|summarize this|what is this|what's this|click|tap|select|type)\b/.test(lower);
     if (isScreenQuery) {
         return null;
     }
@@ -339,7 +339,7 @@ export async function planWithGemini(args: {
     model?: string;
     conversationContext?: string;
 }): Promise<ActionPlan> {
-    const modelName = args.model ?? "gemini-2.0-flash-lite";
+    const modelName = args.model ?? "gemini-2.5-flash";
 
     // Try local fallback first for simple commands (faster, no API call)
     const localPlan = tryLocalPlan(args.transcript);
@@ -369,7 +369,7 @@ export async function planWithGemini(args: {
 
     // Detect if the user is asking about their screen OR asking to click/interact
     const lower = args.transcript.toLowerCase();
-    const isScreenQuery = /\b(on my screen|looking at|read this|summarize this|what is this|what's this|click|tap|select)\b/.test(lower);
+    const isScreenQuery = /\b(on my screen|see my screen|looking at|read this|summarize this|what is this|what's this|click|tap|select|type)\b/.test(lower);
 
     if (isScreenQuery) {
         try {
