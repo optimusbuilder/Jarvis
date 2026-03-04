@@ -14,10 +14,11 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 let overlayProcess: ChildProcess | null = null;
+let contextPanelProcess: ChildProcess | null = null;
 
-function getOverlayBinaryPath(): string {
+function getOverlayBinaryPath(name: "jarvis-overlay" | "jarvis-context-panel"): string {
     const dir = dirname(fileURLToPath(import.meta.url));
-    return resolve(dir, "..", "assets", "jarvis-overlay");
+    return resolve(dir, "..", "assets", name);
 }
 
 /**
@@ -33,7 +34,7 @@ export function showOverlay(args: {
     // Dismiss any existing overlay first
     dismissOverlay();
 
-    const binaryPath = getOverlayBinaryPath();
+    const binaryPath = getOverlayBinaryPath("jarvis-overlay");
     if (!existsSync(binaryPath)) {
         console.warn("  ⚠️  Overlay binary not found, skipping overlay display");
         return;
@@ -81,4 +82,63 @@ export function dismissOverlay(): void {
     }
 
     overlayProcess = null;
+}
+/**
+ * Show the context copilot panel on screen.
+ * Automatically dismisses after `dismissAfterSec` seconds,
+ * or can be dismissed early with `dismissContextPanel()`.
+ */
+export function showContextPanel(args: {
+    text: string;
+    title?: string;
+    dismissAfterSec?: number;
+}): void {
+    dismissContextPanel();
+
+    const binaryPath = getOverlayBinaryPath("jarvis-context-panel");
+    if (!existsSync(binaryPath)) {
+        console.warn("  ⚠️  Context panel binary not found");
+        return;
+    }
+
+    const cmdArgs = [
+        "--text", args.text,
+        "--title", args.title ?? "Jarvis Copilot",
+        "--dismiss", String(args.dismissAfterSec ?? 45),
+    ];
+
+    contextPanelProcess = spawn(binaryPath, cmdArgs, {
+        stdio: ["pipe", "ignore", "ignore"],
+        detached: true,
+    });
+
+    contextPanelProcess.on("error", (err) => {
+        console.warn(`  ⚠️  Context panel error: ${err.message}`);
+        contextPanelProcess = null;
+    });
+
+    contextPanelProcess.on("exit", () => {
+        contextPanelProcess = null;
+    });
+}
+
+/**
+ * Dismiss the currently visible context panel (if any).
+ */
+export function dismissContextPanel(): void {
+    if (!contextPanelProcess) return;
+
+    try {
+        if (contextPanelProcess.stdin && !contextPanelProcess.stdin.destroyed) {
+            contextPanelProcess.stdin.write("CLOSE\n");
+        }
+    } catch {
+        try {
+            contextPanelProcess.kill();
+        } catch {
+            // ignore
+        }
+    }
+
+    contextPanelProcess = null;
 }

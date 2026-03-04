@@ -150,10 +150,13 @@ RULES:
         - You MUST analyze the image if the user asks "what am I looking at?", "read this", "summarize my screen", etc.
         - Describe what you see accurately and concisely in the spoken_response.
     13. SPOTIFY PLAYBACK: If asked to play a specific song on Spotify:
-        - Step 1: Use web_search(query="[Song Name] [Artist] Spotify Track URI") to find the exact track ID.
-        - Step 2: In the FOLLOWING turn, you MUST use execute_applescript(script="tell application \\"Spotify\\" to play track \\"spotify:track:[ID]\\"")
-        - DO NOT just answer with the URI. You MUST execute the applescript to physically play it.
-        - If just asked to open Spotify without a song, use open_app("Spotify").`;
+        - Use the \`play_spotify\` tool with the \`song\` argument (and optionally \`artist\`).
+        - If just asked to open Spotify without a song, use open_app("Spotify").
+    14. CONTEXT COPILOT: If you receive a [Currently Highlighted Text] in the prompt and the user asks you to explain, rewrite, or analyze it:
+        - CRITICAL: NEVER use \`web_search\` to look up the explanation! Use your own intelligence.
+        - DO NOT put the long answer in \`spoken_response\`. Keep \`spoken_response\` very short (e.g. "Here is the explanation.").
+        - You MUST use the \`show_context_panel\` tool to display your generated explanation or rewritten text.
+        - You can optionally set a \`title\` like "Explanation" or "Rewrite".`;
 
       const payload = JSON.stringify(
         { instruction, desktop_state: state ?? null, context_snapshot: context ?? null },

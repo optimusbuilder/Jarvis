@@ -22,7 +22,8 @@ import { executeToolCall } from "./tools.js";
 import { speak, type TTSConfig } from "./ttsEngine.js";
 import { startTray } from "./trayMenu.js";
 import { addUserTurn, addAssistantTurn, getConversationContext, compactIfNeeded } from "./conversationMemory.js";
-import { showOverlay, dismissOverlay } from "./overlay.js";
+import { showOverlay, dismissOverlay, showContextPanel, dismissContextPanel } from "./overlay.js";
+import { getHighlightedText } from "./clipboardHack.js";
 
 // Load environment variables
 loadLocalDotenv();
@@ -229,6 +230,13 @@ async function handleWakeWord(): Promise<void> {
             }
         }
 
+        // ── Extract Highlighted Text ──
+        console.log("  📋 Checking for highlighted text context...");
+        const selectedText = await getHighlightedText();
+        if (selectedText) {
+            console.log(`     [Detected ${selectedText.length} chars selected]`);
+        }
+
         // ── Plan with Gemini ──
         tray.updateState({ status: "planning" });
         console.log("  🤖 Planning...");
@@ -238,6 +246,7 @@ async function handleWakeWord(): Promise<void> {
             geminiApiKey: geminiApiKey || undefined,
             model: geminiModel,
             conversationContext: conversationContext || undefined,
+            selectedText: selectedText || undefined,
         });
 
         // Record user turn

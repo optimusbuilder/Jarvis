@@ -101,10 +101,13 @@ RULES:
         - You MUST analyze the image if the user asks "what am I looking at?", "read this", "summarize my screen", etc.
         - Describe what you see accurately and concisely in the spoken_response.
     13. SPOTIFY PLAYBACK: If asked to play a specific song on Spotify:
-        - Step 1: Use web_search(query="[Song Name] [Artist] Spotify Track URI") to find the exact track ID.
-        - Step 2: In the FOLLOWING turn, you MUST use execute_applescript(script="tell application \\"Spotify\\" to play track \\"spotify:track:[ID]\\"")
-        - DO NOT just answer with the URI. You MUST execute the applescript to physically play it.
-        - If just asked to open Spotify without a song, use open_app("Spotify").`;
+        - Use the \`play_spotify\` tool with the \`song\` argument (and optionally \`artist\`).
+        - If just asked to open Spotify without a song, use open_app("Spotify").
+    14. CONTEXT COPILOT: If you receive a [Currently Highlighted Text] in the prompt and the user asks you to explain, rewrite, or analyze it:
+        - CRITICAL: NEVER use \`web_search\` to look up the explanation! Use your own intelligence.
+        - DO NOT put the long answer in \`spoken_response\`. Keep \`spoken_response\` very short (e.g. "Here is the explanation.").
+        - You MUST use the \`show_context_panel\` tool to display your generated explanation or rewritten text.
+        - You can optionally set a \`title\` like "Explanation" or "Rewrite".`;
 
 // ── Local Fallback Planner ──────────────────────────
 
@@ -343,6 +346,7 @@ export async function planWithGemini(args: {
     transcript: string;
     model?: string;
     conversationContext?: string;
+    selectedText?: string;
 }): Promise<ActionPlan> {
     const modelName = args.model ?? "gemini-2.5-flash";
 
@@ -368,6 +372,9 @@ export async function planWithGemini(args: {
     let promptString = args.transcript;
     if (args.conversationContext) {
         promptString = `[Conversation context]\n${args.conversationContext}\n\n[Current command]\n${args.transcript}`;
+    }
+    if (args.selectedText) {
+        promptString = `[Currently Highlighted Text]\n${args.selectedText}\n\n` + promptString;
     }
 
     const promptParts: Part[] = [{ text: promptString }];
@@ -442,6 +449,7 @@ export async function planCommand(args: {
     geminiApiKey?: string;
     model?: string;
     conversationContext?: string;
+    selectedText?: string;
 }): Promise<ActionPlan> {
     // If no API key, only use local planner
     if (!args.geminiApiKey) {
@@ -460,6 +468,7 @@ export async function planCommand(args: {
             transcript: args.transcript,
             model: args.model,
             conversationContext: args.conversationContext,
+            selectedText: args.selectedText,
         });
     } catch (error) {
         // If Gemini fails, try local fallback

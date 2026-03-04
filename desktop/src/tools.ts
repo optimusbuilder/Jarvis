@@ -104,6 +104,10 @@ const confirmActionArgs = z.object({
 const webSearchArgs = z.object({
   query: z.string().min(1).max(500),
 });
+const playSpotifyArgs = z.object({
+  song: z.string().min(1).max(200),
+  artist: z.string().max(200).optional(),
+});
 const focusAppArgs = z.object({ name: z.string().min(1).max(200) });
 const clickMenuArgs = z.object({
   menu_path: z.array(z.string().min(1).max(120)).min(2).max(8),
@@ -125,8 +129,26 @@ const findAndOpenArgs = z.object({
   query: z.string().min(1).max(200),
   root: z.string().optional()
 });
+const showContextPanelArgs = z.object({
+  text: z.string().max(8000).optional(),
+  content: z.string().max(8000).optional(),
+  title: z.string().max(100).optional()
+}).refine(data => data.text || data.content, {
+  message: "Either 'text' or 'content' must be provided",
+});
 
 export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
+  show_context_panel: {
+    description: "Display text in a beautiful Contextual Copilot popover next to the mouse cursor. Use this ONLY when asked to explain, translate, define, rewrite, or otherwise process the user's [Currently Highlighted Text]. Do not use for generic web searches.",
+    args_schema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The answer, explanation, or rewritten text to display. (You can also use 'content' for this)" },
+        title: { type: "string", description: "Optional title, like 'Definition' or 'Rewrite'." },
+        content: { type: "string", description: "The answer, explanation, or rewritten text to display." }
+      }
+    }
+  },
   open_app: {
     description: "Open a macOS application by name.",
     args_schema: {
@@ -149,6 +171,17 @@ export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
       type: "object",
       required: ["url"],
       properties: { url: { type: "string", format: "uri" } }
+    }
+  },
+  play_spotify: {
+    description: "Search for a song and flawlessly play it natively on Spotify.",
+    args_schema: {
+      type: "object",
+      required: ["song"],
+      properties: {
+        song: { type: "string", minLength: 1 },
+        artist: { type: "string" }
+      }
     }
   },
   search_files: {
@@ -548,6 +581,21 @@ async function waitForMs(ms: number): Promise<void> {
 }
 
 export const toolRegistry: Record<string, ToolHandler> = {
+  async show_context_panel(args, opts) {
+    const parsed = showContextPanelArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({ observedState: "validation_failed", error: "invalid_args: " + parsed.error.message });
+    }
+    if (opts.dryRun) return ok(`dry_run: would show context panel`);
+    try {
+      const { showContextPanel } = await import("./overlay.js");
+      const displayText = parsed.data.text || parsed.data.content || "Empty response";
+      showContextPanel({ text: displayText, title: parsed.data.title });
+      return ok("Context panel displayed successfully");
+    } catch (e: any) {
+      return fail({ observedState: "show_context_panel_error", error: e.message });
+    }
+  },
   async open_app(args, opts) {
     const parsed = openAppArgs.safeParse(args);
     if (!parsed.success) {
@@ -1140,6 +1188,59 @@ export const toolRegistry: Record<string, ToolHandler> = {
       });
     }
   },
+  play_spotify: async (args, opts) => {
+    const parsed = playSpotifyArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "invalid args for play_spotify",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would search and play '${parsed.data.song}' on Spotify`);
+
+    const apiKey = process.env.TAVILY_API_KEY;
+    if (!apiKey) return fail({ observedState: "missing_api_key", error: "TAVILY_API_KEY missing" });
+
+    try {
+      const query = `site:open.spotify.com/track ${parsed.data.song} ${parsed.data.artist || ""}`;
+      const response = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query: query,
+          search_depth: "basic",
+          max_results: 3
+        })
+      });
+
+      if (!response.ok) return fail({ observedState: "tavily_error", error: "Search failed" });
+      const data = await response.json() as any;
+      const results = data.results || [];
+      const trackResult = results.find((r: any) => r.url && r.url.includes("open.spotify.com/track/"));
+
+      if (!trackResult) {
+        return ok(`Could not find the exact Spotify Track URI for ${parsed.data.song}.`);
+      }
+
+      // Extract URI from URL: https://open.spotify.com/track/6DEQrAxmm8myanLuFTtFqt
+      const idMatch = trackResult.url.match(/track\/([a-zA-Z0-9]+)/);
+      if (!idMatch) {
+        return ok(`Found URL but could not parse the track ID for ${parsed.data.song}.`);
+      }
+
+      const uri = `spotify:track:${idMatch[1]}`;
+      const script = `tell application "Spotify" to play track "${uri}"`;
+
+      const { exec } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      await promisify(exec)(`osascript -e '${script}'`);
+
+      return ok(`Native Spotify playback started for ${parsed.data.song} (${uri})`);
+    } catch (e) {
+      return fail({ observedState: "play_spotify_failed", error: String(e) });
+    }
+  },
   execute_applescript: async (args, opts) => {
     const parsed = z.object({ script: z.string() }).safeParse(args);
     if (!parsed.success) {
@@ -1149,15 +1250,15 @@ export const toolRegistry: Record<string, ToolHandler> = {
       });
     }
     if (opts.dryRun) {
-      return ok(`would_execute_applescript: script='${parsed.data.script.slice(0, 50)}...'`);
+      return ok(`would_execute_applescript: script = '${parsed.data.script.slice(0, 50)}...'`);
     }
 
     try {
       // Escape single quotes for bash passing to osascript -e '...'
       const safeScript = parsed.data.script.replace(/'/g, "'\\''");
-      const { stdout, stderr } = await execAsync(`osascript -e '${safeScript}'`);
+      const { stdout, stderr } = await execAsync(`osascript - e '${safeScript}'`);
       const output = (stdout || stderr || "success").trim();
-      return ok(`applescript_executed: ${output}`);
+      return ok(`applescript_executed: ${output} `);
     } catch (err: any) {
       return fail({
         observedState: `applescript_failed`,
@@ -1175,7 +1276,7 @@ export const toolRegistry: Record<string, ToolHandler> = {
     }
 
     if (opts.dryRun) {
-      return ok(`would_click_element: description='${parsed.data.description}'`);
+      return ok(`would_click_element: description = '${parsed.data.description}'`);
     }
 
     try {
@@ -1188,7 +1289,7 @@ export const toolRegistry: Record<string, ToolHandler> = {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-      const prompt = `Return the bounding box coordinates [ymin, xmin, ymax, xmax] for the element matching the description: "${parsed.data.description}". Only return the JSON array, no formatting.`;
+      const prompt = `Return the bounding box coordinates[ymin, xmin, ymax, xmax] for the element matching the description: "${parsed.data.description}".Only return the JSON array, no formatting.`;
 
       const result = await model.generateContent([mimeData, { text: prompt }]);
       const text = result.response.text().trim();
@@ -1198,7 +1299,7 @@ export const toolRegistry: Record<string, ToolHandler> = {
       if (!match) {
         return fail({
           observedState: "vision_failed",
-          error: `Gemini could not find "${parsed.data.description}" or returned invalid format: ${text}`
+          error: `Gemini could not find "${parsed.data.description}" or returned invalid format: ${text} `
         });
       }
 
@@ -1235,10 +1336,10 @@ export const toolRegistry: Record<string, ToolHandler> = {
       const dir = dirname(fileURLToPath(import.meta.url));
       const jarvisMousePath = resolve(dir, "..", "assets", "jarvis-mouse");
 
-      console.log(`  🖱️  Clicking at ${targetX}, ${targetY}`);
+      console.log(`  🖱️  Clicking at ${targetX}, ${targetY} `);
       await execAsync(`"${jarvisMousePath}" ${targetX} ${targetY} --click`);
 
-      return ok(`clicked_element: ${parsed.data.description} at ${targetX}, ${targetY}`);
+      return ok(`clicked_element: ${parsed.data.description} at ${targetX}, ${targetY} `);
 
     } catch (err: any) {
       return fail({
@@ -1281,7 +1382,7 @@ export async function executeToolCall(args: {
       requested_tool: args.call.name,
       normalized_tool: normalized.name,
       result: fail({
-        observedState: `execution_failed: ${normalized.name}`,
+        observedState: `execution_failed: ${normalized.name} `,
         error: String(err)
       })
     };
