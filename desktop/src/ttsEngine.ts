@@ -9,6 +9,8 @@
 
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
+import numberToWords from "number-to-words";
+const { toWords } = numberToWords;
 
 const execFileAsync = promisify(execFile);
 
@@ -62,6 +64,20 @@ function formatForSpeech(text: string): string {
         return `${mo} ${d}${suffix}, ${year}`;
     });
 
+    // Translate any remaining standalone large numbers into words (e.g. 1988 -> "one thousand nine hundred eighty-eight")
+    // We only match whole numbers, skipping decimals or already formatted strings
+    out = out.replace(/\b(\d+)\b/g, (match, digits) => {
+        try {
+            const num = parseInt(digits, 10);
+            if (!isNaN(num) && num < 9007199254740991) {
+                return toWords(num);
+            }
+            return match;
+        } catch {
+            return match;
+        }
+    });
+
     // Trim double spaces
     out = out.replace(/\s{2,}/g, " ").trim();
 
@@ -113,6 +129,7 @@ async function speakWithElevenLabs(args: {
             "-nodisp",       // no video display
             "-autoexit",     // exit when done
             "-loglevel", "quiet",
+            "-af", "atempo=1.15", // speed up voice by 15% without changing pitch
             "-f", "mp3",     // input format
             "-i", "pipe:0",  // read from stdin
         ], { stdio: ["pipe", "ignore", "ignore"] });

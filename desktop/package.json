@@ -17,11 +17,13 @@
     "@picovoice/porcupine-node": "^4.0.2",
     "@picovoice/pvrecorder-node": "^1.2.8",
     "express": "^4.21.2",
+    "number-to-words": "^1.2.4",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.19",
+    "@types/number-to-words": "^1.2.3",
     "@types/supertest": "^6.0.2",
     "supertest": "^7.1.1",
     "tsx": "^4.19.2",
