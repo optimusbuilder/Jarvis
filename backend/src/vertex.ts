@@ -148,7 +148,12 @@ RULES:
     Use your knowledge to answer factual questions. For anything time-sensitive or you're unsure about, use web_search.
     12. CONTEXT-AWARE VISION: If an image is attached to your prompt, it is a SCREENSHOT of the user's current display.
         - You MUST analyze the image if the user asks "what am I looking at?", "read this", "summarize my screen", etc.
-        - Describe what you see accurately and concisely in the spoken_response.`;
+        - Describe what you see accurately and concisely in the spoken_response.
+    13. SPOTIFY PLAYBACK: If asked to play a specific song on Spotify:
+        - Step 1: Use web_search(query="[Song Name] [Artist] Spotify Track URI") to find the exact track ID.
+        - Step 2: In the FOLLOWING turn, you MUST use execute_applescript(script="tell application \\"Spotify\\" to play track \\"spotify:track:[ID]\\"")
+        - DO NOT just answer with the URI. You MUST execute the applescript to physically play it.
+        - If just asked to open Spotify without a song, use open_app("Spotify").`;
 
       const payload = JSON.stringify(
         { instruction, desktop_state: state ?? null, context_snapshot: context ?? null },
