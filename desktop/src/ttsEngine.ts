@@ -109,7 +109,7 @@ async function speakWithElevenLabs(args: {
         body: JSON.stringify({
             text: formattedText,
             model_id: args.modelId ?? "eleven_turbo_v2_5",
-            voice_settings: { stability: 0.3, similarity_boost: 0.8, speed: 1.15 },
+            voice_settings: { stability: 0.3, similarity_boost: 0.8 },
             optimize_streaming_latency: 3, // max optimization
         }),
     });
@@ -129,7 +129,6 @@ async function speakWithElevenLabs(args: {
             "-nodisp",       // no video display
             "-autoexit",     // exit when done
             "-loglevel", "quiet",
-            "-af", "atempo=1.15", // speed up voice by 15% without changing pitch
             "-f", "mp3",     // input format
             "-i", "pipe:0",  // read from stdin
         ], { stdio: ["pipe", "ignore", "ignore"] });

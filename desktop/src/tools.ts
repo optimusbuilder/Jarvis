@@ -1198,8 +1198,80 @@ export const toolRegistry: Record<string, ToolHandler> = {
     }
     if (opts.dryRun) return ok(`dry_run: would search and play '${parsed.data.song}' on Spotify`);
 
-    const apiKey = process.env.TAVILY_API_KEY;
-    if (!apiKey) return fail({ observedState: "missing_api_key", error: "TAVILY_API_KEY missing" });
+    const { exec } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execAsync = promisify(exec);
+
+    // ── Strategy 1: Official Spotify Web API (preferred, most accurate) ──
+    const spotifyClientId = process.env.SPOTIFY_CLIENT_ID;
+    const spotifyClientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+
+    if (spotifyClientId && spotifyClientSecret) {
+      try {
+        // Get access token via Client Credentials Flow
+        const tokenRes = await fetch("https://accounts.spotify.com/api/token", {
+          method: "POST",
+          headers: {
+            "Authorization": "Basic " + Buffer.from(`${spotifyClientId}:${spotifyClientSecret}`).toString("base64"),
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: "grant_type=client_credentials",
+        });
+
+        if (!tokenRes.ok) {
+          console.warn("  ⚠️  Spotify token request failed, falling back to Tavily");
+        } else {
+          const tokenData = await tokenRes.json() as any;
+          const accessToken = tokenData.access_token;
+
+          // Search for the track
+          const searchQuery = parsed.data.artist
+            ? `track:${parsed.data.song} artist:${parsed.data.artist}`
+            : parsed.data.song;
+
+          const searchRes = await fetch(
+            `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=5&market=US`,
+            { headers: { "Authorization": `Bearer ${accessToken}` } }
+          );
+
+          if (searchRes.ok) {
+            const searchData = await searchRes.json() as any;
+            const tracks = searchData?.tracks?.items || [];
+
+            if (tracks.length > 0) {
+              // Pick the best match — prefer exact name match, then most popular
+              let bestTrack = tracks[0];
+              const songLower = parsed.data.song.toLowerCase();
+              const artistLower = (parsed.data.artist || "").toLowerCase();
+
+              for (const t of tracks) {
+                const nameMatch = t.name.toLowerCase().includes(songLower);
+                const artistMatch = !artistLower || t.artists.some((a: any) => a.name.toLowerCase().includes(artistLower));
+                if (nameMatch && artistMatch) {
+                  bestTrack = t;
+                  break;
+                }
+              }
+
+              const uri = bestTrack.uri; // e.g. "spotify:track:xxxx"
+              const displayName = `${bestTrack.name} by ${bestTrack.artists.map((a: any) => a.name).join(", ")}`;
+              const script = `tell application "Spotify" to play track "${uri}"`;
+              await execAsync(`osascript -e '${script}'`);
+
+              return ok(`Native Spotify playback started for ${displayName} (${uri})`);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`  ⚠️  Spotify API search failed: ${e}, falling back to Tavily`);
+      }
+    }
+
+    // ── Strategy 2: Tavily web search fallback ──
+    const tavilyKey = process.env.TAVILY_API_KEY;
+    if (!tavilyKey) {
+      return fail({ observedState: "missing_api_keys", error: "Neither SPOTIFY_CLIENT_ID/SECRET nor TAVILY_API_KEY configured" });
+    }
 
     try {
       const query = `site:open.spotify.com/track ${parsed.data.song} ${parsed.data.artist || ""}`;
@@ -1207,10 +1279,10 @@ export const toolRegistry: Record<string, ToolHandler> = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          api_key: apiKey,
+          api_key: tavilyKey,
           query: query,
           search_depth: "basic",
-          max_results: 3
+          max_results: 5
         })
       });
 
@@ -1223,7 +1295,6 @@ export const toolRegistry: Record<string, ToolHandler> = {
         return ok(`Could not find the exact Spotify Track URI for ${parsed.data.song}.`);
       }
 
-      // Extract URI from URL: https://open.spotify.com/track/6DEQrAxmm8myanLuFTtFqt
       const idMatch = trackResult.url.match(/track\/([a-zA-Z0-9]+)/);
       if (!idMatch) {
         return ok(`Found URL but could not parse the track ID for ${parsed.data.song}.`);
@@ -1231,10 +1302,7 @@ export const toolRegistry: Record<string, ToolHandler> = {
 
       const uri = `spotify:track:${idMatch[1]}`;
       const script = `tell application "Spotify" to play track "${uri}"`;
-
-      const { exec } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      await promisify(exec)(`osascript -e '${script}'`);
+      await execAsync(`osascript -e '${script}'`);
 
       return ok(`Native Spotify playback started for ${parsed.data.song} (${uri})`);
     } catch (e) {
@@ -1388,3 +1456,54 @@ export async function executeToolCall(args: {
     };
   }
 }
+
+// ── Gemini Live API helpers ─────────────────────────
+
+/**
+ * Convert our toolSchemas registry into the FunctionDeclaration[] format
+ * that the Gemini Live API expects in its config.tools array.
+ * Filters out browser tools (require active page) and aliases.
+ */
+export function toLiveFunctionDeclarations(): Array<{
+  name: string;
+  description: string;
+  parameters?: Record<string, unknown>;
+}> {
+  // Tools to exclude from Live API (require browser page, are aliases, or are rarely useful in voice)
+  const excludeTools = new Set([
+    "browser_new_tab", "browser_go", "browser_search",
+    "browser_click_result", "browser_extract_text",
+    "browser_click_text", "browser_type_active",
+    "browser_extract_visible_text",
+    "click_element",  // requires vision/screen analysis
+  ]);
+
+  return Object.entries(toolSchemas)
+    .filter(([name]) => !excludeTools.has(name))
+    .map(([name, schema]) => ({
+      name,
+      description: schema.description,
+      parameters: schema.args_schema ? {
+        type: "object",
+        properties: schema.args_schema.properties ?? {},
+        required: schema.args_schema.required ?? [],
+      } : undefined,
+    }));
+}
+
+/**
+ * Execute a tool call from the Gemini Live API's toolCall message.
+ * Returns the result string for sendToolResponse().
+ */
+export async function executeLiveToolCall(name: string, args: Record<string, unknown>): Promise<string> {
+  const result = await executeToolCall({
+    call: { name, args: args as any },
+    dryRun: false,
+  });
+  if (result.result.success) {
+    return result.result.observed_state ?? "ok";
+  } else {
+    return `Error: ${result.result.error ?? "unknown error"}`;
+  }
+}
+
