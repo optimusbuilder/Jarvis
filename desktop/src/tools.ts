@@ -1375,7 +1375,8 @@ export const toolRegistry: Record<string, ToolHandler> = {
     try {
       // Escape single quotes for bash passing to osascript -e '...'
       const safeScript = parsed.data.script.replace(/'/g, "'\\''");
-      const { stdout, stderr } = await execAsync(`osascript - e '${safeScript}'`);
+      const { stdout, stderr } = await execAsync(`osascript -e '${safeScript}'`);
+
       const output = (stdout || stderr || "success").trim();
       return ok(`applescript_executed: ${output} `);
     } catch (err: any) {
