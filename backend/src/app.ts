@@ -36,7 +36,8 @@ export function createApp(args: {
     logInfo("healthz", { request_id: requestId });
     res.json({
       ok: true,
-      service: "aura-backend",
+      service: "jarvis-backend",
+
       version: args.env.AURA_BACKEND_VERSION,
       ts: new Date().toISOString()
     });

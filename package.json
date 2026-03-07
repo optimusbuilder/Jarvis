@@ -1,5 +1,5 @@
 {
-  "name": "aura",
+  "name": "jarvis",
   "private": true,
   "workspaces": [
     "backend",

@@ -1,5 +1,5 @@
 {
-  "name": "@aura/desktop-agent",
+  "name": "@jarvis/desktop-agent",
   "private": true,
   "type": "module",
   "scripts": {

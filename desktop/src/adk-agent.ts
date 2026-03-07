@@ -1,5 +1,5 @@
 /**
- * AURA Voice Agent — Main entry point.
+ * Jarvis Voice Agent — Main entry point.
  *
  * Single-process voice-first computer control agent.
  * Phase 1: Wake word detection (Porcupine) ✅
@@ -153,14 +153,14 @@ RULES:
 
         adkRunner = new Runner({
             agent,
-            appName: "Aura",
+            appName: "Jarvis",
             sessionService: adkSessionService
         });
     }
 
     if (!currentSessionId) {
         const session = await adkSessionService.createSession({
-            appName: "Aura",
+            appName: "Jarvis",
             userId: "default_user"
         });
         currentSessionId = session.id;
@@ -254,7 +254,7 @@ async function handleWakeWord(): Promise<void> {
 
         // Check for kill switch voice command
         const lowerTranscript = transcript.toLowerCase();
-        if (lowerTranscript.includes("stop") && lowerTranscript.includes("aura") ||
+        if (lowerTranscript.includes("stop") && lowerTranscript.includes("jarvis") ||
             lowerTranscript.includes("kill switch") ||
             lowerTranscript.includes("abort") ||
             lowerTranscript.includes("cancel everything")) {
@@ -488,7 +488,7 @@ const ttsStatus = ttsConfig.elevenLabsApiKey
 
 console.log("");
 console.log("╔═══════════════════════════════════════╗");
-console.log("║    🌟 AURA Voice Agent                ║");
+console.log("║    🌟 Jarvis Voice Agent               ║");
 console.log("║    Voice-First Computer Control        ║");
 console.log("╠═══════════════════════════════════════╣");
 console.log("║  Say \"Jarvis\" then speak a command    ║");
@@ -502,7 +502,7 @@ listener.start(onWakeWordDetected);
 
 // ── Graceful shutdown ───────────────────────────────
 function shutdown(): void {
-    console.log("\n🛑 Shutting down AURA Voice Agent...");
+    console.log("\n🛑 Shutting down Jarvis Voice Agent...");
     listener.stop();
     tray.stop();
     dismissOverlay();

@@ -1,5 +1,5 @@
 {
-  "name": "@aura/backend",
+  "name": "@jarvis/backend",
   "private": true,
   "type": "module",
   "scripts": {

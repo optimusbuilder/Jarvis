@@ -173,8 +173,8 @@ export async function movePath(args: { path: string; destinationDir: string }): 
 function trashDirPath(target: string): string {
   const roots = configuredAllowedRoots();
   const root = roots.find((candidate) => pathWithinRoot({ root: candidate, target }));
-  if (root) return path.join(root, ".aura-trash");
-  return path.join(os.tmpdir(), ".aura-trash");
+  if (root) return path.join(root, ".jarvis-trash");
+  return path.join(os.tmpdir(), ".jarvis-trash");
 }
 
 export async function trashPath(targetPath: string): Promise<{ from: string; to: string }> {

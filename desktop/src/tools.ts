@@ -1306,10 +1306,11 @@ export const toolRegistry: Record<string, ToolHandler> = {
 
               const uri = bestTrack.uri; // e.g. "spotify:track:xxxx"
               const displayName = `${bestTrack.name} by ${bestTrack.artists.map((a: any) => a.name).join(", ")}`;
-              const script = `tell application "Spotify" to play track "${uri}"`;
+              const safeUri = uri.replace(/"/g, "");
+              const script = `tell application "Spotify" to play track "${safeUri}"`;
               await execAsync(`osascript -e '${script}'`);
 
-              return ok(`Native Spotify playback started for ${displayName} (${uri})`);
+              return ok(`Native Spotify playback started for ${displayName} (${safeUri})`);
             }
           }
         }
@@ -1352,10 +1353,12 @@ export const toolRegistry: Record<string, ToolHandler> = {
       }
 
       const uri = `spotify:track:${idMatch[1]}`;
-      const script = `tell application "Spotify" to play track "${uri}"`;
+      const safeUri = uri.replace(/"/g, "");
+      const script = `tell application "Spotify" to play track "${safeUri}"`;
       await execAsync(`osascript -e '${script}'`);
 
-      return ok(`Native Spotify playback started for ${parsed.data.song} (${uri})`);
+      return ok(`Native Spotify playback started for ${parsed.data.song} (${safeUri})`);
+
     } catch (e) {
       return fail({ observedState: "play_spotify_failed", error: String(e) });
     }

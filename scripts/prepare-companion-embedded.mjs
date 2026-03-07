@@ -48,7 +48,8 @@ async function prepare() {
   await cp(desktopDist, embeddedDesktop, { recursive: true });
 
   const embeddedPackageJson = {
-    name: "@aura/embedded-runtime",
+    name: "@jarvis/embedded-runtime",
+
     private: true,
     type: "module",
     dependencies: {

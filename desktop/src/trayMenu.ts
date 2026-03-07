@@ -1,5 +1,5 @@
 /**
- * Native macOS System Tray for AURA Voice Agent.
+ * Native macOS System Tray for Jarvis Voice Agent.
  *
  * Uses JXA (JavaScript for Automation) via `osascript` to create a
  * real macOS NSStatusBar item. Zero npm dependencies, no Electron.
@@ -19,18 +19,18 @@ const STATE_FILE = "/tmp/aura-tray-state.json";
 const ACTION_FILE = "/tmp/aura-tray-action.json";
 
 export type TrayState = {
-    status: "idle" | "listening" | "recording" | "transcribing" | "planning" | "executing" | "speaking" | "error";
-    lastTranscript: string;
-    lastAction: string;
-    lastResponse: string;
-    killSwitchActive: boolean;
-    geminiConnected: boolean;
-    ttsEngine: string;
+  status: "idle" | "listening" | "recording" | "transcribing" | "planning" | "executing" | "speaking" | "error";
+  lastTranscript: string;
+  lastAction: string;
+  lastResponse: string;
+  killSwitchActive: boolean;
+  geminiConnected: boolean;
+  ttsEngine: string;
 };
 
 export type TrayAction = {
-    action: "quit" | "kill_switch" | "open_logs";
-    timestamp: number;
+  action: "quit" | "kill_switch" | "open_logs";
+  timestamp: number;
 };
 
 // The JXA script that creates the native tray icon
@@ -146,7 +146,7 @@ function updateMenu() {
   menu.addItem($.NSMenuItem.separatorItem);
 
   // Quit
-  var quitItem = $.NSMenuItem.alloc.initWithTitleActionKeyEquivalent("Quit AURA Voice", "terminate:", "q");
+  var quitItem = $.NSMenuItem.alloc.initWithTitleActionKeyEquivalent("Quit Jarvis", "terminate:", "q");
   menu.addItem(quitItem);
 }
 
@@ -171,99 +171,99 @@ app.run;
 let trayProcess: ChildProcess | null = null;
 let stateUpdateInterval: ReturnType<typeof setInterval> | null = null;
 let currentState: TrayState = {
-    status: "idle",
-    lastTranscript: "",
-    lastAction: "",
-    lastResponse: "",
-    killSwitchActive: false,
-    geminiConnected: false,
-    ttsEngine: "none",
+  status: "idle",
+  lastTranscript: "",
+  lastAction: "",
+  lastResponse: "",
+  killSwitchActive: false,
+  geminiConnected: false,
+  ttsEngine: "none",
 };
 
 /**
  * Write current state to the state file for the JXA script to read.
  */
 async function writeState(): Promise<void> {
-    try {
-        await writeFile(STATE_FILE, JSON.stringify(currentState), "utf8");
-    } catch {
-        // ignore write errors
-    }
+  try {
+    await writeFile(STATE_FILE, JSON.stringify(currentState), "utf8");
+  } catch {
+    // ignore write errors
+  }
 }
 
 /**
  * Check for actions written by the JXA script.
  */
 async function checkActions(): Promise<TrayAction | null> {
-    try {
-        const content = await readFile(ACTION_FILE, "utf8");
-        await unlink(ACTION_FILE);
-        return JSON.parse(content) as TrayAction;
-    } catch {
-        return null;
-    }
+  try {
+    const content = await readFile(ACTION_FILE, "utf8");
+    await unlink(ACTION_FILE);
+    return JSON.parse(content) as TrayAction;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Start the system tray.
  */
 export function startTray(config: {
-    geminiConnected: boolean;
-    ttsEngine: string;
-    onQuit?: () => void;
+  geminiConnected: boolean;
+  ttsEngine: string;
+  onQuit?: () => void;
 }): {
-    updateState: (patch: Partial<TrayState>) => void;
-    stop: () => void;
+  updateState: (patch: Partial<TrayState>) => void;
+  stop: () => void;
 } {
-    currentState.geminiConnected = config.geminiConnected;
-    currentState.ttsEngine = config.ttsEngine;
+  currentState.geminiConnected = config.geminiConnected;
+  currentState.ttsEngine = config.ttsEngine;
 
-    // Write initial state
+  // Write initial state
+  void writeState();
+
+  // Spawn the JXA script
+  trayProcess = spawn("osascript", ["-l", "JavaScript", "-e", JXA_SCRIPT], {
+    stdio: "ignore",
+    detached: false,
+  });
+
+  trayProcess.on("error", (err) => {
+    console.warn(`⚠️  Tray icon error: ${err.message}`);
+  });
+
+  trayProcess.on("exit", () => {
+    trayProcess = null;
+    // If the tray exits (e.g., user clicks Quit), trigger the quit callback
+    if (config.onQuit) {
+      config.onQuit();
+    }
+  });
+
+  // Periodically write state
+  stateUpdateInterval = setInterval(() => {
     void writeState();
+  }, 500);
 
-    // Spawn the JXA script
-    trayProcess = spawn("osascript", ["-l", "JavaScript", "-e", JXA_SCRIPT], {
-        stdio: "ignore",
-        detached: false,
-    });
+  return {
+    updateState(patch: Partial<TrayState>) {
+      Object.assign(currentState, patch);
+      void writeState();
+    },
 
-    trayProcess.on("error", (err) => {
-        console.warn(`⚠️  Tray icon error: ${err.message}`);
-    });
+    stop() {
+      if (stateUpdateInterval) {
+        clearInterval(stateUpdateInterval);
+        stateUpdateInterval = null;
+      }
 
-    trayProcess.on("exit", () => {
+      if (trayProcess) {
+        trayProcess.kill("SIGTERM");
         trayProcess = null;
-        // If the tray exits (e.g., user clicks Quit), trigger the quit callback
-        if (config.onQuit) {
-            config.onQuit();
-        }
-    });
+      }
 
-    // Periodically write state
-    stateUpdateInterval = setInterval(() => {
-        void writeState();
-    }, 500);
-
-    return {
-        updateState(patch: Partial<TrayState>) {
-            Object.assign(currentState, patch);
-            void writeState();
-        },
-
-        stop() {
-            if (stateUpdateInterval) {
-                clearInterval(stateUpdateInterval);
-                stateUpdateInterval = null;
-            }
-
-            if (trayProcess) {
-                trayProcess.kill("SIGTERM");
-                trayProcess = null;
-            }
-
-            // Clean up state files
-            void unlink(STATE_FILE).catch(() => { });
-            void unlink(ACTION_FILE).catch(() => { });
-        },
-    };
+      // Clean up state files
+      void unlink(STATE_FILE).catch(() => { });
+      void unlink(ACTION_FILE).catch(() => { });
+    },
+  };
 }
