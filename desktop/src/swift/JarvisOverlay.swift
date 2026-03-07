@@ -144,6 +144,15 @@ class OverlayAppDelegate: NSObject, NSApplicationDelegate {
         visualEffect.addSubview(iconView)
         visualEffect.addSubview(titleLabel)
         visualEffect.addSubview(textView)
+        
+        // Add an invisible button covering the entire panel to dismiss on click
+        let clickButton = NSButton(frame: NSRect(x: 0, y: 0, width: PANEL_WIDTH, height: PANEL_HEIGHT))
+        clickButton.title = ""
+        clickButton.isTransparent = true
+        clickButton.target = self
+        clickButton.action = #selector(overlayClicked)
+        visualEffect.addSubview(clickButton)
+
         panel.contentView = visualEffect
 
         // Slide down and fade in animation
@@ -173,6 +182,10 @@ class OverlayAppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    @objc func overlayClicked() {
+        dismissPanel()
     }
 
     func dismissPanel() {
