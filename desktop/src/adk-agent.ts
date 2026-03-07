@@ -13,19 +13,22 @@ import { loadLocalDotenv } from "./localDotenv.js";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import os from "node:os";
 import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
 import { recordWithVAD } from "./vad.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
 import { transcribeWithAppleSpeech } from "./appleSpeech.js";
-import { LlmAgent, Gemini, Runner, InMemorySessionService } from '@google/adk';
-import { toAdkTools } from "./tools.js";
+import { executeToolCall } from "./tools.js";
 import { speak, type TTSConfig } from "./ttsEngine.js";
 import { startTray } from "./trayMenu.js";
 import { showOverlay, dismissOverlay, showContextPanel, dismissContextPanel } from "./overlay.js";
 import { getHighlightedText } from "./clipboardHack.js";
+import { createAgentSession, agentTurn } from "./cloudAgentClient.js";
+import { loadEnv } from "./env.js";
 
 // Load environment variables
 loadLocalDotenv();
+const env = loadEnv();
 
 // ── Config ──────────────────────────────────────────
 const accessKey = process.env.PICOVOICE_ACCESS_KEY;
@@ -128,45 +131,62 @@ async function speakResponse(text: string): Promise<void> {
     }
 }
 
-const adkSessionService = new InMemorySessionService();
-let adkRunner: Runner | null = null;
 let currentSessionId: string | null = null;
 
-async function getAdkRunner(): Promise<{ runner: Runner, sessionId: string }> {
-    if (!adkRunner) {
-        const ai = new Gemini({ model: geminiModel || "gemini-2.5-flash", apiKey: geminiApiKey });
-        const instruction = `You are Jarvis, a voice-controlled AI assistant for macOS built by Oluwaferanmi. You control the user's computer using tools.
-
-RULES:
-1. You are speaking to the user in real-time via voice. Keep your responses SHORT and conversational.
-2. When the user asks you to do something on their computer, call the appropriate tool.
-3. After a tool succeeds, confirm briefly: "Done", "Opening Safari", etc.
-4. For questions about real-time info, use web_search.
-5. If asked to "explain this" and there is highlighted text, use show_context_panel.`;
-
-        const agent = new LlmAgent({
-            name: "Jarvis",
-            model: ai,
-            tools: toAdkTools(),
-            instruction,
-        });
-
-        adkRunner = new Runner({
-            agent,
-            appName: "Jarvis",
-            sessionService: adkSessionService
-        });
-    }
-
+async function getSessionId(): Promise<string> {
     if (!currentSessionId) {
-        const session = await adkSessionService.createSession({
-            appName: "Jarvis",
-            userId: "default_user"
+        currentSessionId = await createAgentSession(env).catch(err => {
+            console.error("Failed to create cloud session:", String(err));
+            return "fallback-session";
         });
-        currentSessionId = session.id;
+    }
+    return currentSessionId;
+}
+
+async function processCloudAgentTurn(transcript: string, selectedText?: string | null): Promise<string> {
+    const sessionId = await getSessionId();
+    let promptText = transcript;
+    if (selectedText) {
+        promptText += `\n\n[Currently Highlighted Text]\n${selectedText}`;
     }
 
-    return { runner: adkRunner, sessionId: currentSessionId };
+    let responseText = "";
+
+    try {
+        let turnRes = await agentTurn(env, {
+            session_id: sessionId,
+            user_message: promptText
+        });
+
+        // Loop as long as the agent returns tool_calls
+        while (turnRes.type === "tool_calls" && turnRes.tool_calls) {
+            const toolResults = [];
+            for (const call of turnRes.tool_calls) {
+                console.log(`  [Cloud Agent] Executing tool locally: ${call.name}`);
+                try {
+                    const result = await executeToolCall({ call, dryRun: false });
+                    toolResults.push({ tool_name: call.name, result });
+                } catch (e) {
+                    toolResults.push({ tool_name: call.name, result: { error: String(e) } });
+                }
+            }
+
+            // Send results back for the next turn
+            turnRes = await agentTurn(env, {
+                session_id: sessionId,
+                tool_results: toolResults
+            });
+        }
+
+        if (turnRes.type === "done" && turnRes.text) {
+            responseText = turnRes.text;
+        }
+    } catch (err) {
+        console.error("  ❌ Cloud Agent Error:", String(err));
+        responseText = "I encountered a network error connecting to the cloud brain.";
+    }
+
+    return responseText;
 }
 
 // ── Command pipeline ────────────────────────────────
@@ -280,39 +300,12 @@ async function handleWakeWord(): Promise<void> {
             console.log(`     [Detected ${selectedText.length} chars selected]`);
         }
 
-        // ── Execute with ADK ──
+        // ── Execute with Cloud Agent ──
         tray.updateState({ status: "planning" });
         showOverlay({ text: "Thinking...", title: "Jarvis" });
-        console.log("  🤖 Thinking (ADK Runner)...");
+        console.log("  🤖 Thinking (Cloud Run)...");
 
-        const { runner, sessionId } = await getAdkRunner();
-        let promptText = transcript;
-        if (selectedText) {
-            promptText += `\n\n[Currently Highlighted Text]\n${selectedText}`;
-        }
-
-        const request = {
-            userId: "default_user",
-            sessionId,
-            newMessage: { role: "user", parts: [{ text: promptText }] }
-        };
-
-        let responseText = "";
-
-        try {
-            // runAsync maintains session history across calls using sessionId
-            for await (const event of runner.runAsync(request)) {
-                if (event.content && event.content.parts && event.content.parts.length > 0) {
-                    const txt = event.content.parts[0].text;
-                    if (txt) {
-                        responseText += txt;
-                    }
-                }
-            }
-        } catch (adkErr) {
-            console.error("  ❌ ADK Error:", String(adkErr));
-            responseText = "I encountered an internal error while processing that.";
-        }
+        const responseText = await processCloudAgentTurn(transcript, selectedText);
 
         // ── Speak response ──
         console.log("");
@@ -423,33 +416,12 @@ async function startFollowUpWindow(): Promise<void> {
         console.log(`  📝 Transcript (${sttEngine}): "${transcript}"`);
         tray.updateState({ lastTranscript: transcript });
 
-        // Execute with ADK
+        // Execute with Cloud Agent
         tray.updateState({ status: "planning" });
         showOverlay({ text: "Thinking...", title: "Jarvis" });
-        console.log("  🤖 Thinking (ADK Runner)...");
+        console.log("  🤖 Thinking (Cloud Run)...");
 
-        const { runner, sessionId } = await getAdkRunner();
-        const request = {
-            userId: "default_user",
-            sessionId,
-            newMessage: { role: "user", parts: [{ text: transcript }] }
-        };
-
-        let responseText = "";
-
-        try {
-            for await (const event of runner.runAsync(request)) {
-                if (event.content && event.content.parts && event.content.parts.length > 0) {
-                    const txt = event.content.parts[0].text;
-                    if (txt) {
-                        responseText += txt;
-                    }
-                }
-            }
-        } catch (adkErr) {
-            console.error("  ❌ ADK Follow-up Error:", String(adkErr));
-            responseText = "I encountered an internal error while processing that.";
-        }
+        const responseText = await processCloudAgentTurn(transcript);
 
         console.log("");
         if (responseText) {

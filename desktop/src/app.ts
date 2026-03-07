@@ -27,6 +27,27 @@ type AuraRequest = express.Request & { aura_request_id?: string };
 type BackendPlanFn = typeof backendPlan;
 type BackendTtsFn = typeof backendTts;
 
+// ── Simple in-memory rate limiter ────────────────────────────────────────────
+// Keyed by IP + route prefix. Counts requests within a sliding 60-second window.
+const rateLimitCounts = new Map<string, number[]>();
+
+function rateLimit(maxPerMinute: number): express.RequestHandler {
+  return (req, res, next) => {
+    const key = `${req.ip}:${req.path.split("/")[1] ?? "root"}`;
+    const now = Date.now();
+    const windowMs = 60_000;
+    const timestamps = (rateLimitCounts.get(key) ?? []).filter(t => now - t < windowMs);
+    if (timestamps.length >= maxPerMinute) {
+      res.status(429).json({ error: "rate_limit_exceeded", retry_after_ms: windowMs });
+      return;
+    }
+    timestamps.push(now);
+    rateLimitCounts.set(key, timestamps);
+    next();
+  };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 type AgentDependencies = {
   backendPlan?: BackendPlanFn;
   backendTts?: BackendTtsFn;
@@ -428,7 +449,7 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     });
   });
 
-  app.post("/voice/ptt/start", async (req, res) => {
+  app.post("/voice/ptt/start", rateLimit(20), async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
     const parsed = voicePttStartRequestSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -481,7 +502,7 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     }
   });
 
-  app.post("/voice/ptt/stop", async (req, res) => {
+  app.post("/voice/ptt/stop", rateLimit(20), async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
     const parsed = voicePttStopRequestSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -535,7 +556,7 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     }
   });
 
-  app.post("/voice/transcribe", async (req, res) => {
+  app.post("/voice/transcribe", rateLimit(20), async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
     const parsed = voiceTranscribeRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -592,7 +613,7 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     }
   });
 
-  app.post("/voice/run", async (req, res) => {
+  app.post("/voice/run", rateLimit(20), async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
     const parsed = voiceRunRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -758,7 +779,7 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     });
   });
 
-  app.post("/voice/respond", async (req, res) => {
+  app.post("/voice/respond", rateLimit(20), async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
     const parsed = voiceRespondRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -825,7 +846,7 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     }
   });
 
-  app.post("/execute", async (req, res) => {
+  app.post("/execute", rateLimit(30), async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
     const parsed = executeRequestSchema.safeParse(req.body);
     if (!parsed.success) {

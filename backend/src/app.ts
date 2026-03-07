@@ -7,6 +7,9 @@ import { elevenLabsTts } from "./elevenlabs.js";
 import { generateSilentWav } from "./stubAudio.js";
 import { validateActionPlan } from "./contracts.js";
 import { ensureRequestId, logError, logInfo } from "./logging.js";
+import { globalSessionStore } from "./agentSessions.js";
+import { runAgentTurn } from "./agentRunner.js";
+import { agentTurnRequestSchema } from "./schemas.js";
 
 type AuraRequest = express.Request & { aura_request_id?: string };
 type TtsProvider = typeof elevenLabsTts;
@@ -88,6 +91,32 @@ export function createApp(args: {
         error: String(err)
       });
       return res.status(502).json({ error: "planner_failed", message: String(err) });
+    }
+  });
+
+  app.post("/agent/session", withRequestId, requireAuth(args.env), (req, res) => {
+    const session = globalSessionStore.createSession();
+    logInfo("agent_session_created", { session_id: session.id });
+    res.json({ session_id: session.id });
+  });
+
+  app.post("/agent/turn", withRequestId, requireAuth(args.env), async (req, res) => {
+    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
+    const parsed = agentTurnRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      logError("agent_turn_invalid", { request_id: requestId, issues: parsed.error.issues });
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    try {
+      const response = await runAgentTurn(args.env, parsed.data, requestId);
+      return res.json(response);
+    } catch (err: any) {
+      if (err.message === "Session not found or expired") {
+        return res.status(404).json({ error: "session_not_found" });
+      }
+      logError("agent_turn_failed", { request_id: requestId, error: String(err) });
+      return res.status(500).json({ error: "agent_runner_failed", message: String(err) });
     }
   });
 

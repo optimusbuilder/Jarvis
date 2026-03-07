@@ -104,7 +104,8 @@ export async function addCalendarEvent(
         endDate: end,
         description: notes
     });
-    targetCal.events.push(newEvent);
+    
+    app.calendars.byName(targetCal.name()).events.push(newEvent);
     targetCal.name();
   `;
 

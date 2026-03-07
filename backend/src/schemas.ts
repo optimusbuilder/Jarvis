@@ -25,3 +25,22 @@ export const ttsRequestSchema = z.object({
 export type PlanRequest = z.infer<typeof planRequestSchema>;
 export type ToolCall = z.infer<typeof toolCallSchema>;
 export type ActionPlan = z.infer<typeof actionPlanSchema>;
+
+export const agentTurnRequestSchema = z.object({
+  session_id: z.string().min(1),
+  user_message: z.string().optional(),
+  tool_results: z.array(z.object({
+    tool_name: z.string(),
+    result: z.any()
+  })).optional()
+});
+
+export const agentTurnResponseSchema = z.object({
+  type: z.enum(["tool_calls", "done"]),
+  session_id: z.string(),
+  tool_calls: z.array(toolCallSchema).optional(),
+  text: z.string().optional()
+});
+
+export type AgentTurnRequest = z.infer<typeof agentTurnRequestSchema>;
+export type AgentTurnResponse = z.infer<typeof agentTurnResponseSchema>;
