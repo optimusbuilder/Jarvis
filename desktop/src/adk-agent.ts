@@ -495,6 +495,8 @@ function shutdown(): void {
     console.log("\n🛑 Shutting down AURA Voice Agent...");
     listener.stop();
     tray.stop();
+    dismissOverlay();
+    dismissContextPanel();
     process.exit(0);
 }
 
