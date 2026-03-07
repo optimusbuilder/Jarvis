@@ -1,3 +1,4 @@
+import { FunctionTool } from "@google/adk";
 import { z } from "zod";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -1457,19 +1458,15 @@ export async function executeToolCall(args: {
   }
 }
 
-// ── Gemini Live API helpers ─────────────────────────
+// ── Google ADK helpers ─────────────────────────
 
 /**
- * Convert our toolSchemas registry into the FunctionDeclaration[] format
- * that the Gemini Live API expects in its config.tools array.
+ * Convert our toolSchemas registry into the FunctionTool[] format
+ * that the Google ADK LlmAgent expects in its `tools` array.
  * Filters out browser tools (require active page) and aliases.
  */
-export function toLiveFunctionDeclarations(): Array<{
-  name: string;
-  description: string;
-  parameters?: Record<string, unknown>;
-}> {
-  // Tools to exclude from Live API (require browser page, are aliases, or are rarely useful in voice)
+export function toAdkTools(): FunctionTool[] {
+  // Tools to exclude from ADK (require browser page, are aliases, or are rarely useful in voice)
   const excludeTools = new Set([
     "browser_new_tab", "browser_go", "browser_search",
     "browser_click_result", "browser_extract_text",
@@ -1480,30 +1477,47 @@ export function toLiveFunctionDeclarations(): Array<{
 
   return Object.entries(toolSchemas)
     .filter(([name]) => !excludeTools.has(name))
-    .map(([name, schema]) => ({
-      name,
-      description: schema.description,
-      parameters: schema.args_schema ? {
-        type: "object",
-        properties: schema.args_schema.properties ?? {},
-        required: schema.args_schema.required ?? [],
-      } : undefined,
-    }));
-}
+    .map(([name, schema]) => {
+      // Build exactly what ADK expects for FunctionTool arguments
+      const toolProperties: any = {};
+      const requiredArr: string[] = schema.args_schema.required as string[] ?? [];
 
-/**
- * Execute a tool call from the Gemini Live API's toolCall message.
- * Returns the result string for sendToolResponse().
- */
-export async function executeLiveToolCall(name: string, args: Record<string, unknown>): Promise<string> {
-  const result = await executeToolCall({
-    call: { name, args: args as any },
-    dryRun: false,
-  });
-  if (result.result.success) {
-    return result.result.observed_state ?? "ok";
-  } else {
-    return `Error: ${result.result.error ?? "unknown error"}`;
-  }
+      const propertiesSource = schema.args_schema.properties as Record<string, any>;
+      if (propertiesSource) {
+        for (const key of Object.keys(propertiesSource)) {
+          // Minimal copy of the properties for the ADK schema
+          const propInfo = propertiesSource[key];
+          toolProperties[key] = {
+            type: propInfo.type,
+            description: propInfo.description
+          };
+          if (propInfo.type === "array" && propInfo.items) {
+            toolProperties[key].items = propInfo.items;
+          }
+        }
+      }
+
+      return new FunctionTool({
+        name,
+        description: schema.description,
+        parameters: {
+          type: "object",
+          properties: toolProperties,
+          required: requiredArr,
+        } as any,
+        execute: async (args: any) => {
+          console.log(`[ADK Agent] Executing tool: ${name}`);
+          const result = await executeToolCall({
+            call: { name, args },
+            dryRun: false,
+          });
+          if (result.result.success) {
+            return result.result.observed_state ?? "Tool executed successfully";
+          } else {
+            return `Error: ${result.result.error ?? "unknown error"}`;
+          }
+        }
+      });
+    });
 }
 

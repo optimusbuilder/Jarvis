@@ -17,11 +17,10 @@ import { createWakeWordListener, resolveKeywordPath } from "./wakeWord.js";
 import { recordWithVAD } from "./vad.js";
 import { transcribeWithWhisperCpp } from "./whisper.js";
 import { transcribeWithAppleSpeech } from "./appleSpeech.js";
-import { planCommand } from "./geminiPlanner.js";
-import { executeToolCall } from "./tools.js";
+import { LlmAgent, Gemini, Runner, InMemorySessionService } from '@google/adk';
+import { toAdkTools } from "./tools.js";
 import { speak, type TTSConfig } from "./ttsEngine.js";
 import { startTray } from "./trayMenu.js";
-import { addUserTurn, addAssistantTurn, getConversationContext, compactIfNeeded } from "./conversationMemory.js";
 import { showOverlay, dismissOverlay, showContextPanel, dismissContextPanel } from "./overlay.js";
 import { getHighlightedText } from "./clipboardHack.js";
 
@@ -127,6 +126,47 @@ async function speakResponse(text: string): Promise<void> {
         console.warn(`  ⚠️  TTS failed: ${String(error)}`);
         dismissOverlay();
     }
+}
+
+const adkSessionService = new InMemorySessionService();
+let adkRunner: Runner | null = null;
+let currentSessionId: string | null = null;
+
+async function getAdkRunner(): Promise<{ runner: Runner, sessionId: string }> {
+    if (!adkRunner) {
+        const ai = new Gemini({ model: geminiModel || "gemini-2.5-flash", apiKey: geminiApiKey });
+        const instruction = `You are Jarvis, a voice-controlled AI assistant for macOS built by Oluwaferanmi. You control the user's computer using tools.
+
+RULES:
+1. You are speaking to the user in real-time via voice. Keep your responses SHORT and conversational.
+2. When the user asks you to do something on their computer, call the appropriate tool.
+3. After a tool succeeds, confirm briefly: "Done", "Opening Safari", etc.
+4. For questions about real-time info, use web_search.
+5. If asked to "explain this" and there is highlighted text, use show_context_panel.`;
+
+        const agent = new LlmAgent({
+            name: "Jarvis",
+            model: ai,
+            tools: toAdkTools(),
+            instruction,
+        });
+
+        adkRunner = new Runner({
+            agent,
+            appName: "Aura",
+            sessionService: adkSessionService
+        });
+    }
+
+    if (!currentSessionId) {
+        const session = await adkSessionService.createSession({
+            appName: "Aura",
+            userId: "default_user"
+        });
+        currentSessionId = session.id;
+    }
+
+    return { runner: adkRunner, sessionId: currentSessionId };
 }
 
 // ── Command pipeline ────────────────────────────────
@@ -237,104 +277,50 @@ async function handleWakeWord(): Promise<void> {
             console.log(`     [Detected ${selectedText.length} chars selected]`);
         }
 
-        // ── Plan with Gemini ──
+        // ── Execute with ADK ──
         tray.updateState({ status: "planning" });
-        console.log("  🤖 Planning...");
-        const conversationContext = getConversationContext();
-        const plan = await planCommand({
-            transcript,
-            geminiApiKey: geminiApiKey || undefined,
-            model: geminiModel,
-            conversationContext: conversationContext || undefined,
-            selectedText: selectedText || undefined,
-        });
+        console.log("  🤖 Thinking (ADK Runner)...");
 
-        // Record user turn
-        addUserTurn(transcript);
-
-        console.log(`  🎯 Goal: ${plan.goal}`);
-
-        if (plan.questions.length > 0) {
-            console.log("  ❓ Questions:");
-            for (const q of plan.questions) {
-                console.log(`     - ${q}`);
-            }
-            await speakResponse(plan.questions[0]);
-            return;
+        const { runner, sessionId } = await getAdkRunner();
+        let promptText = transcript;
+        if (selectedText) {
+            promptText += `\n\n[Currently Highlighted Text]\n${selectedText}`;
         }
 
-        if (plan.tool_calls.length === 0) {
-            if (plan.spoken_response) {
-                // Q&A mode — just speak the answer
-                console.log("  💬 Answering question...");
-                tray.updateState({ status: "speaking", lastResponse: plan.spoken_response });
-                await speakResponse(plan.spoken_response);
-                addAssistantTurn(plan.spoken_response);
-            } else {
-                console.log("  ⚠️  No actions to take.");
-                await speakResponse("I'm not sure what to do with that command.");
-            }
-            return;
-        }
+        const request = {
+            userId: "default_user",
+            sessionId,
+            newMessage: { role: "user", parts: [{ text: promptText }] }
+        };
 
-        tray.updateState({ status: "executing", lastAction: plan.goal });
-        console.log(`  🔧 Executing ${plan.tool_calls.length} tool call(s)...`);
+        let responseText = "";
 
-        // ── Execute tool calls ──
-        let allSucceeded = true;
-        const results: string[] = [];
-        let webSearchAnswer = "";
-        for (let i = 0; i < plan.tool_calls.length; i++) {
-            const call = plan.tool_calls[i];
-
-            // Check kill switch before each tool call
-            if (killSwitchActive) {
-                console.log(`  🛑 Kill switch active — aborting remaining tool calls.`);
-                allSucceeded = false;
-                break;
-            }
-
-            const stepLabel = `[${i + 1}/${plan.tool_calls.length}]`;
-            console.log(`  ${stepLabel} ${call.name}(${JSON.stringify(call.args)})`);
-
-            const result = await executeToolCall({
-                call: { name: call.name, args: call.args },
-                dryRun: false,
-            });
-
-            if (result.result.success) {
-                console.log(`  ${stepLabel} ✅ ${result.result.observed_state}`);
-                results.push(`${call.name}: success`);
-                // Capture web_search results for speaking
-                if (call.name === "web_search" && result.result.observed_state) {
-                    const webAnswer = result.result.observed_state.replace(/^web_search_ok:\s*/, "");
-                    if (webAnswer) webSearchAnswer = webAnswer;
+        try {
+            // runAsync maintains session history across calls using sessionId
+            for await (const event of runner.runAsync(request)) {
+                if (event.content && event.content.parts && event.content.parts.length > 0) {
+                    const txt = event.content.parts[0].text;
+                    if (txt) {
+                        responseText += txt;
+                    }
                 }
-            } else {
-                console.log(`  ${stepLabel} ❌ ${result.result.error ?? "unknown error"}`);
-                allSucceeded = false;
-                results.push(`${call.name}: failed`);
             }
+        } catch (adkErr) {
+            console.error("  ❌ ADK Error:", String(adkErr));
+            responseText = "I encountered an internal error while processing that.";
         }
 
         // ── Speak response ──
         console.log("");
-        if (allSucceeded) {
-            console.log("  ✅ All actions completed successfully!");
-            // For web searches, speak the actual search results
-            const response = webSearchAnswer || plan.spoken_response || "Done.";
-            tray.updateState({ status: "speaking", lastResponse: response });
-            await speakResponse(response);
-            addAssistantTurn(response);
+        if (responseText) {
+            console.log(`  ✅ ADK Response: ${responseText}`);
+            tray.updateState({ status: "speaking", lastResponse: responseText });
+            await speakResponse(responseText);
         } else {
-            console.log("  ⚠️  Some actions failed.");
-            tray.updateState({ status: "speaking", lastResponse: "Some actions failed" });
-            await speakResponse("Some actions failed. Check the console for details.");
-            addAssistantTurn("Some actions failed.");
+            console.log("  ⚠️  No text response generated by ADK.");
+            tray.updateState({ status: "speaking", lastResponse: "Done." });
+            await speakResponse("Done.");
         }
-
-        // Compact conversation memory if needed
-        await compactIfNeeded(geminiApiKey || undefined);
 
     } catch (error) {
         console.error("  ❌ Error:", String(error));
@@ -422,83 +408,43 @@ async function startFollowUpWindow(): Promise<void> {
         console.log(`  📝 Transcript (${sttEngine}): "${transcript}"`);
         tray.updateState({ lastTranscript: transcript });
 
-        // Plan
+        // Execute with ADK
         tray.updateState({ status: "planning" });
-        console.log("  🤖 Planning...");
-        const conversationContext = getConversationContext();
-        const plan = await planCommand({
-            transcript,
-            geminiApiKey: geminiApiKey || undefined,
-            model: geminiModel,
-            conversationContext: conversationContext || undefined,
-        });
+        console.log("  🤖 Thinking (ADK Runner)...");
 
-        addUserTurn(transcript);
+        const { runner, sessionId } = await getAdkRunner();
+        const request = {
+            userId: "default_user",
+            sessionId,
+            newMessage: { role: "user", parts: [{ text: transcript }] }
+        };
 
-        console.log(`  🎯 Goal: ${plan.goal}`);
+        let responseText = "";
 
-        if (plan.questions.length > 0) {
-            for (const q of plan.questions) console.log(`     - ${q}`);
-            await speakResponse(plan.questions[0]);
-            isProcessingCommand = false;
-            tray.updateState({ status: "idle" });
-            // Start another follow-up window after answering a question
-            await startFollowUpWindow();
-            return;
-        }
-
-        if (plan.tool_calls.length === 0) {
-            if (plan.spoken_response) {
-                console.log("  💬 Answering...");
-                tray.updateState({ status: "speaking", lastResponse: plan.spoken_response });
-                await speakResponse(plan.spoken_response);
-                addAssistantTurn(plan.spoken_response);
-            } else {
-                await speakResponse("I'm not sure what to do with that.");
-            }
-            isProcessingCommand = false;
-            tray.updateState({ status: "idle" });
-            await startFollowUpWindow();
-            return;
-        }
-
-        // Execute
-        tray.updateState({ status: "executing", lastAction: plan.goal });
-        console.log(`  🔧 Executing ${plan.tool_calls.length} tool call(s)...`);
-
-        let allSucceeded = true;
-        let webSearchAnswer = "";
-        for (let i = 0; i < plan.tool_calls.length; i++) {
-            const call = plan.tool_calls[i];
-            const stepLabel = `[${i + 1}/${plan.tool_calls.length}]`;
-            console.log(`  ${stepLabel} ${call.name}(${JSON.stringify(call.args)})`);
-            const result = await executeToolCall({ call: { name: call.name, args: call.args }, dryRun: false });
-            if (result.result.success) {
-                console.log(`  ${stepLabel} ✅ ${result.result.observed_state}`);
-                if (call.name === "web_search" && result.result.observed_state) {
-                    const webAnswer = result.result.observed_state.replace(/^web_search_ok:\s*/, "");
-                    if (webAnswer) webSearchAnswer = webAnswer;
+        try {
+            for await (const event of runner.runAsync(request)) {
+                if (event.content && event.content.parts && event.content.parts.length > 0) {
+                    const txt = event.content.parts[0].text;
+                    if (txt) {
+                        responseText += txt;
+                    }
                 }
-            } else {
-                console.log(`  ${stepLabel} ❌ ${result.result.error ?? "unknown error"}`);
-                allSucceeded = false;
             }
+        } catch (adkErr) {
+            console.error("  ❌ ADK Follow-up Error:", String(adkErr));
+            responseText = "I encountered an internal error while processing that.";
         }
 
         console.log("");
-        if (allSucceeded) {
-            console.log("  ✅ All actions completed!");
-            const response = webSearchAnswer || plan.spoken_response || "Done.";
-            tray.updateState({ status: "speaking", lastResponse: response });
-            await speakResponse(response);
-            addAssistantTurn(response);
+        if (responseText) {
+            console.log(`  ✅ ADK Response: ${responseText}`);
+            tray.updateState({ status: "speaking", lastResponse: responseText });
+            await speakResponse(responseText);
         } else {
-            tray.updateState({ status: "speaking", lastResponse: "Some actions failed" });
-            await speakResponse("Some actions failed.");
-            addAssistantTurn("Some actions failed.");
+            console.log("  ⚠️  No text response generated by ADK.");
+            tray.updateState({ status: "speaking", lastResponse: "Done." });
+            await speakResponse("Done.");
         }
-
-        await compactIfNeeded(geminiApiKey || undefined);
 
         isProcessingCommand = false;
         tray.updateState({ status: "idle" });

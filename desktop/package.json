@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "voice": "tsx src/voice-agent.ts",
-    "live": "tsx src/live-agent.ts",
+    "voice": "tsx src/adk-agent.ts",
+    "adk": "tsx src/adk-agent.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test:unit": "vitest run test/app.test.ts test/voice.test.ts test/browserController.test.ts test/systemController.test.ts",
@@ -14,13 +14,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@google/adk": "^0.4.0",
     "@google/generative-ai": "^0.24.1",
     "@picovoice/porcupine-node": "^4.0.2",
     "@picovoice/pvrecorder-node": "^1.2.8",
     "express": "^4.21.2",
-    "mic": "^2.1.2",
     "number-to-words": "^1.2.4",
-    "speaker": "^0.5.5",
     "zod": "^3.24.2"
   },
   "devDependencies": {
