@@ -192,6 +192,9 @@ async function handleWakeWord(): Promise<void> {
     // Stop the wake word listener to release the microphone
     listener.stop();
 
+    // Show visual overlay indicator immediately
+    showOverlay({ text: "Listening...", title: "Jarvis" });
+
     // Small delay to let audio device fully release, then play chime
     await new Promise(r => setTimeout(r, 100));
     await playListeningChime();
@@ -279,6 +282,7 @@ async function handleWakeWord(): Promise<void> {
 
         // ── Execute with ADK ──
         tray.updateState({ status: "planning" });
+        showOverlay({ text: "Thinking...", title: "Jarvis" });
         console.log("  🤖 Thinking (ADK Runner)...");
 
         const { runner, sessionId } = await getAdkRunner();
@@ -369,6 +373,7 @@ async function startFollowUpWindow(): Promise<void> {
 
         // Process this follow-up command through the full pipeline
         isProcessingCommand = true;
+        showOverlay({ text: "Listening...", title: "Jarvis" });
 
         // Transcribe
         tray.updateState({ status: "transcribing" });
@@ -410,6 +415,7 @@ async function startFollowUpWindow(): Promise<void> {
 
         // Execute with ADK
         tray.updateState({ status: "planning" });
+        showOverlay({ text: "Thinking...", title: "Jarvis" });
         console.log("  🤖 Thinking (ADK Runner)...");
 
         const { runner, sessionId } = await getAdkRunner();
