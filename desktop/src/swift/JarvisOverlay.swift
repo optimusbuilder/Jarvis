@@ -80,48 +80,56 @@ class OverlayAppDelegate: NSObject, NSApplicationDelegate {
         visualEffect.layer?.borderWidth = 1.0
         visualEffect.layer?.borderColor = NSColor(white: 1.0, alpha: 0.15).cgColor
 
-        // Title label (e.g. "Jarvis")
-        let titleLabel = NSTextField(labelWithString: titleText)
-        titleLabel.font = NSFont.systemFont(ofSize: TITLE_FONT_SIZE, weight: .semibold)
+        // Title label (e.g. "Jarvis") -> We'll repurpose this as a subtitle
+        let titleLabel = NSTextField(labelWithString: titleText == "Jarvis" ? "Voice Assistant" : titleText)
+        let titleFont = NSFont(name: "AvenirNext-Medium", size: TITLE_FONT_SIZE) ?? NSFont.systemFont(ofSize: TITLE_FONT_SIZE, weight: .medium)
+        titleLabel.font = titleFont
         titleLabel.textColor = NSColor.secondaryLabelColor
-        titleLabel.frame = NSRect(x: PADDING, y: PANEL_HEIGHT - PADDING - TITLE_FONT_SIZE - 4, width: PANEL_WIDTH - 2 * PADDING, height: TITLE_FONT_SIZE + 6)
+        titleLabel.isBordered = false
+        titleLabel.drawsBackground = false
+        titleLabel.isEditable = false
 
-        // Jarvis icon (gradient circle)
-        let iconSize: CGFloat = 28
-        let iconView = NSView(frame: NSRect(x: PADDING, y: PANEL_HEIGHT - PADDING - iconSize, width: iconSize, height: iconSize))
+        // Jarvis icon (gradient pill instead of circle)
+        let iconWidth: CGFloat = 64
+        let iconHeight: CGFloat = 24
+        let iconView = NSView(frame: NSRect(x: PADDING, y: PANEL_HEIGHT - PADDING - iconHeight, width: iconWidth, height: iconHeight))
         iconView.wantsLayer = true
-        iconView.layer?.cornerRadius = iconSize / 2
+        iconView.layer?.cornerRadius = iconHeight / 2
         
         // Setup gradient layer
         let gradientLayer = CAGradientLayer()
         gradientLayer.frame = iconView.bounds
         gradientLayer.colors = [
-            NSColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 1.0).cgColor,
-            NSColor(red: 0.8, green: 0.2, blue: 0.8, alpha: 1.0).cgColor
+            NSColor(red: 0.1, green: 0.8, blue: 0.9, alpha: 1.0).cgColor, // Electric Cyan
+            NSColor(red: 0.4, green: 0.1, blue: 0.9, alpha: 1.0).cgColor  // Deep Violet
         ]
-        gradientLayer.startPoint = CGPoint(x: 0.0, y: 0.0)
-        gradientLayer.endPoint = CGPoint(x: 1.0, y: 1.0)
+        gradientLayer.startPoint = CGPoint(x: 0.0, y: 0.5)
+        gradientLayer.endPoint = CGPoint(x: 1.0, y: 0.5)
         iconView.layer?.addSublayer(gradientLayer)
 
-        // "J" letter in the icon
-        let iconLabel = NSTextField(labelWithString: "J")
-        iconLabel.font = NSFont.systemFont(ofSize: 14, weight: .bold)
+        // "JARVIS" text inside the pill
+        let iconLabel = NSTextField(labelWithString: "JARVIS")
+        iconLabel.font = NSFont.systemFont(ofSize: 11, weight: .heavy)
         iconLabel.textColor = .white
         iconLabel.alignment = .center
         iconLabel.isBordered = false
         iconLabel.drawsBackground = false
         iconLabel.isEditable = false
-        iconLabel.frame = NSRect(x: 0, y: 0, width: iconSize, height: iconSize)
+        
+        // Vertically center the text properly
+        let iconLabelHeight: CGFloat = 16
+        iconLabel.frame = NSRect(x: 0, y: (iconHeight - iconLabelHeight) / 2 - 1, width: iconWidth, height: iconLabelHeight)
         iconView.addSubview(iconLabel)
 
-        // Adjust title position next to icon
-        titleLabel.frame = NSRect(x: PADDING + iconSize + 8, y: PANEL_HEIGHT - PADDING - iconSize + (iconSize - TITLE_FONT_SIZE - 4) / 2, width: PANEL_WIDTH - 2 * PADDING - iconSize - 8, height: TITLE_FONT_SIZE + 6)
+        // Adjust title position next to the pill
+        titleLabel.frame = NSRect(x: PADDING + iconWidth + 10, y: PANEL_HEIGHT - PADDING - iconHeight + (iconHeight - TITLE_FONT_SIZE - 4) / 2, width: PANEL_WIDTH - 2 * PADDING - iconWidth - 10, height: TITLE_FONT_SIZE + 6)
 
         // Response text (main content)
-        let textView = NSScrollView(frame: NSRect(x: PADDING, y: PADDING, width: PANEL_WIDTH - 2 * PADDING, height: PANEL_HEIGHT - 2 * PADDING - iconSize - 12))
+        let textView = NSScrollView(frame: NSRect(x: PADDING, y: PADDING, width: PANEL_WIDTH - 2 * PADDING, height: PANEL_HEIGHT - 2 * PADDING - iconHeight - 12))
         let text = NSTextView(frame: textView.bounds)
         text.string = displayText
-        text.font = NSFont.systemFont(ofSize: FONT_SIZE, weight: .regular)
+        let textFont = NSFont(name: "AvenirNext-Regular", size: FONT_SIZE) ?? NSFont.systemFont(ofSize: FONT_SIZE, weight: .regular)
+        text.font = textFont
         text.textColor = NSColor.labelColor
         text.backgroundColor = .clear
         text.isEditable = false
