@@ -343,11 +343,21 @@ const FOLLOW_UP_TIMEOUT_MS = 20_000;
 
 /** After a command, stay awake and listen for follow-up commands for 20s. */
 async function startFollowUpWindow(): Promise<void> {
+    // If kill switch was activated during the last command, don't enter follow-up mode
+    if (killSwitchActive) {
+        console.log("  🛑 Kill switch is active — skipping follow-up window.");
+        console.log("");
+        console.log("🎙️  Listening for \"Jarvis\"...");
+        listener.start(onWakeWordDetected);
+        return;
+    }
+
     console.log(`  ⏱️  Listening for follow-up (${FOLLOW_UP_TIMEOUT_MS / 1000}s)...`);
     tray.updateState({ status: "listening" });
 
     // Play a subtle tone to indicate we're still listening
     await playFollowUpChime();
+
 
     try {
         const recording = await recordWithVAD({
