@@ -7,7 +7,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { captureScreenMimeData } from "./vision.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { openApp, openPath, openUrl, getFrontmostAppName } from "./macos.js";
+import { openApp, openPath, openUrl, getFrontmostAppName, addCalendarEvent } from "./macos.js";
 import type { ToolCall, ToolResult } from "./schemas.js";
 import {
   browserClickResult,
@@ -137,6 +137,12 @@ const showContextPanelArgs = z.object({
 }).refine(data => data.text || data.content, {
   message: "Either 'text' or 'content' must be provided",
 });
+const addCalendarEventArgs = z.object({
+  title: z.string().min(1).max(200),
+  start_date_iso: z.string().datetime(),
+  end_date_iso: z.string().datetime(),
+  notes: z.string().max(1000).optional()
+});
 
 export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
   show_context_panel: {
@@ -243,6 +249,29 @@ export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
       required: ["reason"],
       properties: {
         reason: { type: "string", minLength: 3 }
+      }
+    }
+  },
+  web_search: {
+    description: "Search the web for real-time information, news, current events, weather, or facts. Returns a summarized answer.",
+    args_schema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", minLength: 1, maxLength: 500 }
+      }
+    }
+  },
+  add_calendar_event: {
+    description: "Add a new event to the macOS Calendar app. Requires standard ISO-8601 date strings for start and end times in the user's local timezone.",
+    args_schema: {
+      type: "object",
+      required: ["title", "start_date_iso", "end_date_iso"],
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 200 },
+        start_date_iso: { type: "string", format: "date-time" },
+        end_date_iso: { type: "string", format: "date-time" },
+        notes: { type: "string", maxLength: 1000 }
       }
     }
   },
@@ -1187,6 +1216,27 @@ export const toolRegistry: Record<string, ToolHandler> = {
         observedState: `web_search_failed: query='${parsed.data.query}'`,
         error: String(error)
       });
+    }
+  },
+
+  async add_calendar_event(args, opts) {
+    const parsed = addCalendarEventArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({ observedState: "validation_failed", error: parsed.error.message });
+    }
+    if (opts.dryRun) {
+      return ok(`would_add_calendar_event: ${parsed.data.title}`);
+    }
+    try {
+      const calName = await addCalendarEvent(
+        parsed.data.title,
+        parsed.data.start_date_iso,
+        parsed.data.end_date_iso,
+        parsed.data.notes || ""
+      );
+      return ok(`add_calendar_event_ok: added to calendar '${calName}'`);
+    } catch (err: any) {
+      return fail({ observedState: "add_calendar_event_failed", error: err.message });
     }
   },
   play_spotify: async (args, opts) => {

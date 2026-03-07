@@ -101,6 +101,7 @@ SYSTEM TOOLS (macOS):
 - confirm_action(reason) — Grant confirmation for destructive actions
 - find_and_open(query, root?) — Search for a file/folder by name and open the best match. "root" is optional (e.g. "Documents")
 - web_search(query) — Search the internet using Tavily. Use for real-time info: prices, news, weather, sports, current events, facts you're unsure about
+- add_calendar_event(title, start_date_iso, end_date_iso) — Add a new event to the macOS Calendar app. Use standard ISO-8601 strings for local timezone.
 
 ACCESSIBILITY TOOLS (macOS UI automation):
 - focus_app(name) — Focus/activate an application window

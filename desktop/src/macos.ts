@@ -72,3 +72,45 @@ function expandUserPath(input: string): string {
   }
   return input;
 }
+
+export async function addCalendarEvent(
+  title: string,
+  startDateIso: string,
+  endDateIso: string,
+  notes: string = ""
+): Promise<string> {
+  const script = `
+    var app = Application('Calendar');
+    var title = ${JSON.stringify(title)};
+    var start = new Date(${JSON.stringify(startDateIso)});
+    var end = new Date(${JSON.stringify(endDateIso)});
+    var notes = ${JSON.stringify(notes)};
+    
+    var cals = app.calendars;
+    if (cals.length === 0) throw new Error("No calendars found");
+    var targetCal = null;
+    for (var i = 0; i < cals.length; i++) {
+        var c = cals[i];
+        if (c.name() === "Home" || c.name() === "Calendar" || c.name() === "Work") {
+            targetCal = c;
+            break;
+        }
+    }
+    if (!targetCal) targetCal = cals[0];
+
+    var newEvent = app.Event({
+        summary: title,
+        startDate: start,
+        endDate: end,
+        description: notes
+    });
+    targetCal.events.push(newEvent);
+    targetCal.name();
+  `;
+
+  const { stdout, stderr } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", script]);
+  if (stderr && !stdout) {
+    throw new Error(stderr);
+  }
+  return stdout.trim();
+}
