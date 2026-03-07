@@ -1,4 +1,4 @@
-import { actionPlanSchema, copilotResponseSchema, type ActionPlan, type CopilotResponse } from "./schemas.js";
+import { actionPlanSchema, type ActionPlan } from "./schemas.js";
 
 function issuePath(path: Array<string | number>): string {
   if (!path.length) return "root";
@@ -27,29 +27,6 @@ export function validateActionPlan(
   return {
     ok: false,
     data: failClosedActionPlan(),
-    errors: formatZodIssues(parsed.error.issues)
-  };
-}
-
-export function failClosedCopilotResponse(
-  reason = "Copilot response failed validation. No intervention shown."
-): CopilotResponse {
-  return {
-    intervene: false,
-    reason,
-    response: "",
-    ui_action: null
-  };
-}
-
-export function validateCopilotResponse(
-  raw: unknown
-): { ok: true; data: CopilotResponse } | { ok: false; data: CopilotResponse; errors: string[] } {
-  const parsed = copilotResponseSchema.safeParse(raw);
-  if (parsed.success) return { ok: true, data: parsed.data };
-  return {
-    ok: false,
-    data: failClosedCopilotResponse(),
     errors: formatZodIssues(parsed.error.issues)
   };
 }

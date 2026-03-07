@@ -1,10 +1,8 @@
 import express from "express";
 import type { Env } from "./env.js";
-import { backendCopilot, backendCopilotFeedback, backendPlan, backendTts } from "./backendClient.js";
+import { backendPlan, backendTts } from "./backendClient.js";
 import {
   actionPlanSchema,
-  copilotFeedbackRequestSchema,
-  copilotRequestSchema,
   executeRequestSchema,
   killSwitchRequestSchema,
   runRequestSchema,
@@ -28,14 +26,10 @@ import { renderControlCenterHtml } from "./ui.js";
 type AuraRequest = express.Request & { aura_request_id?: string };
 type BackendPlanFn = typeof backendPlan;
 type BackendTtsFn = typeof backendTts;
-type BackendCopilotFn = typeof backendCopilot;
-type BackendCopilotFeedbackFn = typeof backendCopilotFeedback;
 
 type AgentDependencies = {
   backendPlan?: BackendPlanFn;
   backendTts?: BackendTtsFn;
-  backendCopilot?: BackendCopilotFn;
-  backendCopilotFeedback?: BackendCopilotFeedbackFn;
   whisperTranscribe?: WhisperTranscriber;
   startPushToTalkCapture?: typeof startPushToTalkCapture;
   writeAudioFile?: typeof writeAudioFile;
@@ -291,8 +285,6 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
   const app = express();
   const planner = args.deps?.backendPlan ?? backendPlan;
   const ttsClient = args.deps?.backendTts ?? backendTts;
-  const copilotClient = args.deps?.backendCopilot ?? backendCopilot;
-  const copilotFeedbackClient = args.deps?.backendCopilotFeedback ?? backendCopilotFeedback;
   const whisperTranscriber = args.deps?.whisperTranscribe ?? transcribeWithWhisperCpp;
   const pttStarter = args.deps?.startPushToTalkCapture ?? startPushToTalkCapture;
   const audioWriter = args.deps?.writeAudioFile ?? writeAudioFile;
@@ -308,7 +300,6 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
   app.use(express.json({ limit: "1mb" }));
   app.use(withRequestId);
 
-  let lastSnapshot: unknown | null = null;
   let activeCapture: PushToTalkCapture | null = null;
   let killSwitchActive = false;
   let killSwitchReason: string | null = null;
@@ -379,114 +370,7 @@ export function createAgentApp(args: { env: Env; deps?: AgentDependencies }): ex
     res.json(payload);
   });
 
-  app.post("/snapshot", async (req, res) => {
-    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
-    lastSnapshot = req.body ?? null;
-    await writeAudit({
-      env: args.env,
-      requestId,
-      event: "snapshot_received",
-      data: { has_snapshot: lastSnapshot != null }
-    });
-    return res.json({ ok: true });
-  });
 
-  app.get("/snapshot", (_req, res) => {
-    return res.json({ ok: true, snapshot: lastSnapshot });
-  });
-
-  app.post("/copilot", async (req, res) => {
-    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
-    const parsed = copilotRequestSchema.safeParse(req.body ?? {});
-    if (!parsed.success) {
-      await writeAudit({
-        env: args.env,
-        requestId,
-        event: "copilot_invalid_request",
-        data: { issues: parsed.error.issues.length }
-      });
-      return res.status(400).json({ error: "invalid_request" });
-    }
-
-    try {
-      const contextSnapshot = parsed.data.context_snapshot ?? lastSnapshot ?? undefined;
-      const upstream = await copilotClient({
-        env: args.env,
-        contextSnapshot,
-        sessionId: parsed.data.session_id,
-        requestId
-      });
-      await writeAudit({
-        env: args.env,
-        requestId,
-        event: "copilot_completed",
-        data: {
-          backend_request_id: upstream.requestId,
-          has_snapshot: contextSnapshot != null
-        }
-      });
-      return res.json({
-        ...(typeof upstream.payload === "object" && upstream.payload ? (upstream.payload as object) : { payload: upstream.payload }),
-        backend_request_id: upstream.requestId
-      });
-    } catch (error) {
-      await writeAudit({
-        env: args.env,
-        requestId,
-        event: "copilot_failed",
-        data: { error: String(error) }
-      });
-      return res.status(502).json({ error: "copilot_failed", message: String(error) });
-    }
-  });
-
-  app.post("/copilot/feedback", async (req, res) => {
-    const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);
-    const parsed = copilotFeedbackRequestSchema.safeParse(req.body ?? {});
-    if (!parsed.success) {
-      await writeAudit({
-        env: args.env,
-        requestId,
-        event: "copilot_feedback_invalid_request",
-        data: { issues: parsed.error.issues.length }
-      });
-      return res.status(400).json({ error: "invalid_request" });
-    }
-
-    try {
-      const upstream = await copilotFeedbackClient({
-        env: args.env,
-        sessionId: parsed.data.session_id,
-        action: parsed.data.action,
-        suggestionKind: parsed.data.suggestion_kind,
-        reason: parsed.data.reason,
-        response: parsed.data.response,
-        timestamp: parsed.data.timestamp,
-        requestId
-      });
-      await writeAudit({
-        env: args.env,
-        requestId,
-        event: "copilot_feedback_completed",
-        data: {
-          backend_request_id: upstream.requestId,
-          action: parsed.data.action
-        }
-      });
-      return res.json({
-        ...(typeof upstream.payload === "object" && upstream.payload ? (upstream.payload as object) : { payload: upstream.payload }),
-        backend_request_id: upstream.requestId
-      });
-    } catch (error) {
-      await writeAudit({
-        env: args.env,
-        requestId,
-        event: "copilot_feedback_failed",
-        data: { error: String(error) }
-      });
-      return res.status(502).json({ error: "copilot_feedback_failed", message: String(error) });
-    }
-  });
 
   app.get("/control", async (req, res) => {
     const requestId = (req as AuraRequest).aura_request_id ?? ensureRequestId(req, res);

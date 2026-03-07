@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validateActionPlan, validateCopilotResponse } from "../src/contracts.js";
-import { actionPlanSchema, contextSnapshotSchema, copilotResponseSchema } from "../src/schemas.js";
+import { validateActionPlan } from "../src/contracts.js";
+import { actionPlanSchema } from "../src/schemas.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = resolve(here, "fixtures", "contracts");
@@ -42,26 +42,6 @@ describe("contract fixtures", () => {
   it("rejects known-bad action plan fixtures with explicit issues", () => {
     expectAllFail(loadFixture("action-plan.bad.json"), (item) => actionPlanSchema.safeParse(item));
   });
-
-  it("accepts known-good copilot fixtures", () => {
-    expectAllPass(loadFixture("copilot.good.json"), (item) => copilotResponseSchema.safeParse(item));
-  });
-
-  it("rejects known-bad copilot fixtures with explicit issues", () => {
-    expectAllFail(loadFixture("copilot.bad.json"), (item) => copilotResponseSchema.safeParse(item));
-  });
-
-  it("accepts known-good context snapshot fixtures", () => {
-    expectAllPass(loadFixture("context-snapshot.good.json"), (item) =>
-      contextSnapshotSchema.safeParse(item)
-    );
-  });
-
-  it("rejects known-bad context snapshot fixtures with explicit issues", () => {
-    expectAllFail(loadFixture("context-snapshot.bad.json"), (item) =>
-      contextSnapshotSchema.safeParse(item)
-    );
-  });
 });
 
 describe("fail-closed behavior", () => {
@@ -70,15 +50,6 @@ describe("fail-closed behavior", () => {
     expect(out.ok).toBe(false);
     if (!out.ok) {
       expect(out.data.tool_calls).toEqual([]);
-      expect(out.errors.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("returns non-intervention response on malformed copilot output", () => {
-    const out = validateCopilotResponse({ intervene: "sometimes" });
-    expect(out.ok).toBe(false);
-    if (!out.ok) {
-      expect(out.data.intervene).toBe(false);
       expect(out.errors.length).toBeGreaterThan(0);
     }
   });
