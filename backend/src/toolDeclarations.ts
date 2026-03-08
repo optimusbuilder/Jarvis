@@ -140,6 +140,17 @@ export const toolDeclarations: FunctionDeclaration[] = [
         }
     },
     {
+        name: "set_system_volume",
+        description: "Sets the system volume to a specific percentage (0-100).",
+        parameters: {
+            type: SchemaType.OBJECT,
+            required: ["volume"],
+            properties: {
+                volume: { type: SchemaType.INTEGER, description: "Volume level from 0 (mute) to 100 (max)" }
+            }
+        }
+    },
+    {
         name: "focus_app",
         description: "Focus an application via macOS Accessibility APIs.",
         parameters: {

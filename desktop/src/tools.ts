@@ -7,7 +7,14 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { captureScreenMimeData } from "./vision.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { openApp, openPath, openUrl, getFrontmostAppName, addCalendarEvent } from "./macos.js";
+import {
+  openApp,
+  openPath,
+  openUrl,
+  getFrontmostAppName,
+  addCalendarEvent,
+  setSystemVolume
+} from "./macos.js";
 import type { ToolCall, ToolResult } from "./schemas.js";
 import {
   browserClickResult,
@@ -142,6 +149,9 @@ const addCalendarEventArgs = z.object({
   start_date_iso: z.string().datetime(),
   end_date_iso: z.string().datetime(),
   notes: z.string().max(1000).optional()
+});
+const setSystemVolumeArgs = z.object({
+  volume: z.coerce.number().int().min(0).max(100)
 });
 
 export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
@@ -745,6 +755,26 @@ export const toolRegistry: Record<string, ToolHandler> = {
     } catch (error) {
       return fail({
         observedState: `create_folder_failed: path='${parsed.data.path}'`,
+        error
+      });
+    }
+  },
+
+  async set_system_volume(args, opts) {
+    const parsed = setSystemVolumeArgs.safeParse(args);
+    if (!parsed.success) {
+      return fail({
+        observedState: "validation_failed: invalid_args for set_system_volume",
+        error: "invalid_args"
+      });
+    }
+    if (opts.dryRun) return ok(`dry_run: would set system volume to ${parsed.data.volume}%`);
+    try {
+      const res = await setSystemVolume(parsed.data.volume);
+      return ok(`set_system_volume_ok: ${res}`);
+    } catch (error) {
+      return fail({
+        observedState: `set_system_volume_failed: volume='${parsed.data.volume}'`,
         error
       });
     }

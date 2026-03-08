@@ -115,3 +115,18 @@ export async function addCalendarEvent(
   }
   return stdout.trim();
 }
+
+/**
+ * Sets the system volume (0-100).
+ */
+export async function setSystemVolume(volumeTarget: number): Promise<string> {
+  const vol = Math.max(0, Math.min(100, volumeTarget));
+  // AppleScript expects a volume between 0 and 100
+  const script = `set volume output volume ${vol}`;
+
+  const { stderr } = await execFileAsync("osascript", ["-e", script]);
+  if (stderr) {
+    throw new Error(stderr);
+  }
+  return `System volume set to ${vol}%`;
+}
