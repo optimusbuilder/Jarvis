@@ -1,10 +1,10 @@
-# 🌟 Jarvis Voice Agent
+# Jarvis Voice Agent
 
 Jarvis is a voice-first, native macOS computer assistant. It listens for a wake word, intelligently processes your requests via Google Cloud, and executes actions directly on your local machine using native macOS APIs.
 
 Unlike typical chatbots, Jarvis acts as a true OS-level copilot—it can play music on your local Spotify app, schedule meetings in your Apple Calendar, adjust system settings, manage files, and control your browser.
 
-## 🏗️ Architecture
+## Architecture
 
 The project is split into a **Thin Desktop Client** and a **Cloud Agent Brain** to meet hackathon requirements for cloud execution while preserving local machine control.
 
@@ -21,18 +21,18 @@ The project is split into a **Thin Desktop Client** and a **Cloud Agent Brain** 
 *   **Text-to-Speech (TTS):** ElevenLabs API for high-quality, expressive voice responses.
 *   **Execution UI:** Custom macOS native frosted-glass Swift overlays (`jarvis-overlay` and `jarvis-context-panel`).
 
-## 🛠️ Native Capabilities (Tools)
+## Native Capabilities (Tools)
 
 Jarvis bridges the LLM with your computer using native macOS automation (JavaScript for Automation/JXA, AppleScript, and OS APIs):
 
-*   🎵 **Spotify Control:** Can search for tracks and intelligently play them in the native macOS Spotify app without requiring the Spotify API.
-*   📅 **Apple Calendar:** Creates events directly in your system Calendar via JXA.
-*   🔊 **System Volume:** Adjusts the OS master volume via AppleScript.
-*   📂 **Filesystem Management:** Can create folders, rename files, move items, trash files, and search using `mdfind` (Spotlight).
-*   🌐 **Browser Automation:** Can open URLs, search the web, and interact with the active browser.
-*   🖱️ **Accessibility & UI:** Can focus apps, click macOS menu bar items, type text into the active window, and press keyboard shortcuts.
+*   **Spotify Control:** Can search for tracks and intelligently play them in the native macOS Spotify app without requiring the Spotify API.
+*   **Apple Calendar:** Creates events directly in your system Calendar via JXA.
+*   **System Volume:** Adjusts the OS master volume via AppleScript.
+*   **Filesystem Management:** Can create folders, rename files, move items, trash files, and search using `mdfind` (Spotlight).
+*   **Browser Automation:** Can open URLs, search the web, and interact with the active browser.
+*   **Accessibility & UI:** Can focus apps, click macOS menu bar items, type text into the active window, and press keyboard shortcuts.
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 *   macOS (Intel or Apple Silicon).
@@ -82,7 +82,7 @@ npm -w desktop run voice
 3. You will hear an activation chime. Speak your command (e.g., *"Set a meeting for tomorrow at 2 PM"* or *"Play some jazz on Spotify"*).
 4. Jarvis will pause, transcribe, think via Cloud Run, execute the action locally, and respond with a voice confirmation and visual overlay.
 
-## 🔒 Safety & Privacy
+##  Safety & Privacy
 *   **Push-to-Talk / Wake Word:** Jarvis only records audio when explicitly summoned. Audio recording stops automatically when you stop speaking.
 *   **Cloud Isolation:** The Cloud Run backend receives only text transcripts, not raw audio or sensitive local files.
 *   **Destructive Actions:** Actions like trashing files or moving data require explicit confirmation.
