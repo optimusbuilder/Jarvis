@@ -130,3 +130,58 @@ export async function setSystemVolume(volumeTarget: number): Promise<string> {
   }
   return `System volume set to ${vol}%`;
 }
+
+/**
+ * Sends an iMessage to a contact by looking up their name in the Contacts app first.
+ */
+export async function sendIMessage(contactName: string, message: string): Promise<string> {
+  // 1. Look up the phone number robustly using JXA
+  const lookupScript = `
+    var app = Application("Contacts");
+    
+    // Try exact match first
+    var people = app.people.whose({name: "${contactName}"})();
+    
+    // If no exact match, try partial match (contains)
+    if (people.length === 0) {
+        people = app.people.whose({name: {_contains: "${contactName}"}})();
+    }
+    
+    if (people.length === 0) {
+        throw new Error("Could not find any contact matching '${contactName}'");
+    }
+    
+    var person = people[0];
+    var resolvedName = person.name();
+    
+    if (person.phones().length === 0) {
+        throw new Error("Contact '" + resolvedName + "' has no phone numbers saved");
+    }
+    
+    var targetNumber = person.phones()[0].value();
+    JSON.stringify({name: resolvedName, number: targetNumber});
+  `;
+
+  const { stdout: lookupOut, stderr: lookupErr } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", lookupScript]);
+
+  if (lookupErr && !lookupOut) {
+    throw new Error(lookupErr);
+  }
+
+  const contactInfo = JSON.parse(lookupOut.trim());
+  const safeName = contactInfo.name;
+
+  // Normalize the number: keep only '+' and digits (e.g. "+1 (555) 123-4567" -> "+15551234567")
+  const rawNumber = contactInfo.number || "";
+  const normalizedNumber = rawNumber.replace(/[^\d+]/g, "");
+
+  // 2. Send the message using pure AppleScript (much more reliable for Messages syntax)
+  const sendScript = `tell application "Messages" to send "${message.replace(/"/g, '\\"')}" to participant "${normalizedNumber}"`;
+  const { stderr: sendErr } = await execFileAsync("osascript", ["-e", sendScript]);
+
+  if (sendErr) {
+    throw new Error("Failed to send message to " + safeName + ": " + sendErr);
+  }
+
+  return `Sent message to ${safeName}`;
+}

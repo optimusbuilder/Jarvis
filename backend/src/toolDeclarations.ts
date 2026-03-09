@@ -151,6 +151,29 @@ export const toolDeclarations: FunctionDeclaration[] = [
         }
     },
     {
+        name: "execute_applescript",
+        description: "Executes an arbitrary AppleScript string on the macOS host. Extremely powerful. Use this for OS-level control like increasing brightness, sending iMessages, or manipulating native features.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            required: ["script"],
+            properties: {
+                script: { type: SchemaType.STRING, description: "The AppleScript code to execute" }
+            }
+        }
+    },
+    {
+        name: "send_imessage",
+        description: "Send an iMessage to a person by looking up their name in the macOS Contacts app. Use this instead of trying to write AppleScript to send messages.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            required: ["contact_name", "message"],
+            properties: {
+                contact_name: { type: SchemaType.STRING, description: "The exact name of the person saved in Contacts" },
+                message: { type: SchemaType.STRING, description: "The message to send" }
+            }
+        }
+    },
+    {
         name: "focus_app",
         description: "Focus an application via macOS Accessibility APIs.",
         parameters: {

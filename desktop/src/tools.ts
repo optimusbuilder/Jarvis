@@ -13,7 +13,8 @@ import {
   openUrl,
   getFrontmostAppName,
   addCalendarEvent,
-  setSystemVolume
+  setSystemVolume,
+  sendIMessage
 } from "./macos.js";
 import type { ToolCall, ToolResult } from "./schemas.js";
 import {
@@ -146,12 +147,19 @@ const showContextPanelArgs = z.object({
 });
 const addCalendarEventArgs = z.object({
   title: z.string().min(1).max(200),
-  start_date_iso: z.string().datetime(),
-  end_date_iso: z.string().datetime(),
+  start_date_iso: z.string(),
+  end_date_iso: z.string(),
   notes: z.string().max(1000).optional()
 });
 const setSystemVolumeArgs = z.object({
   volume: z.coerce.number().int().min(0).max(100)
+});
+const executeApplescriptArgs = z.object({
+  script: z.string().min(1)
+});
+const sendIMessageArgs = z.object({
+  contact_name: z.string().min(1),
+  message: z.string().min(1)
 });
 
 export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
@@ -209,6 +217,37 @@ export const toolSchemas: Record<string, ToolSchemaDescriptor> = {
       properties: {
         query: { type: "string", minLength: 1 },
         limit: { type: "integer", minimum: 1, maximum: 50 }
+      }
+    }
+  },
+  set_system_volume: {
+    description: "Set the system output volume to a specific level.",
+    args_schema: {
+      type: "object",
+      required: ["volume"],
+      properties: {
+        volume: { type: "integer", description: "Volume level from 0 (mute) to 100 (max)", minimum: 0, maximum: 100 }
+      }
+    }
+  },
+  execute_applescript: {
+    description: "Executes an arbitrary AppleScript string on the macOS host. Extremely powerful. Use this for OS-level control like increasing brightness, sending iMessages, or manipulating native features.",
+    args_schema: {
+      type: "object",
+      required: ["script"],
+      properties: {
+        script: { type: "string", description: "The AppleScript code to execute" }
+      }
+    }
+  },
+  send_imessage: {
+    description: "Send an iMessage to a person by looking up their name in the macOS Contacts app. Use this instead of trying to write AppleScript to send messages.",
+    args_schema: {
+      type: "object",
+      required: ["contact_name", "message"],
+      properties: {
+        contact_name: { type: "string", description: "The exact name of the person saved in Contacts" },
+        message: { type: "string", description: "The message to send" }
       }
     }
   },
@@ -648,7 +687,7 @@ export const toolRegistry: Record<string, ToolHandler> = {
     try {
       await openApp(parsed.data.name);
       const front = await getFrontmostAppName();
-      return ok(`opened app '${parsed.data.name}'; frontmost=${front ?? "unknown"}`);
+      return ok(`opened app '${parsed.data.name}; frontmost=${front ?? "unknown"}`);
     } catch (error) {
       // App not found — try fuzzy matching with Spotlight
       try {
@@ -1398,25 +1437,33 @@ export const toolRegistry: Record<string, ToolHandler> = {
     if (!parsed.success) {
       return fail({
         observedState: "invalid args for execute_applescript",
-        error: parsed.error.message
+        error: JSON.stringify(parsed.error.errors)
       });
-    }
-    if (opts.dryRun) {
-      return ok(`would_execute_applescript: script = '${parsed.data.script.slice(0, 50)}...'`);
     }
 
     try {
-      // Escape single quotes for bash passing to osascript -e '...'
       const safeScript = parsed.data.script.replace(/'/g, "'\\''");
       const { stdout, stderr } = await execAsync(`osascript -e '${safeScript}'`);
-
-      const output = (stdout || stderr || "success").trim();
-      return ok(`applescript_executed: ${output} `);
+      console.log("[AppleScript Execution] stdout:", stdout, "stderr:", stderr);
+      if (stderr && !stdout) {
+        return fail({ observedState: "Applescript generated stderr", error: stderr });
+      }
+      return ok(`execute_applescript successful. Output: ${stdout.trim()}`);
     } catch (err: any) {
       return fail({
         observedState: `applescript_failed`,
         error: String(err?.stderr || err?.message || err)
       });
+    }
+  },
+  send_imessage: async (args, opts) => {
+    const parsed = sendIMessageArgs.safeParse(args);
+    if (!parsed.success) return fail({ observedState: "invalid args", error: JSON.stringify(parsed.error.errors) });
+    try {
+      const result = await sendIMessage(parsed.data.contact_name, parsed.data.message);
+      return ok(result);
+    } catch (e) {
+      return fail({ observedState: "failed_to_send_imessage", error: String(e) });
     }
   },
   click_element: async (args, opts) => {
