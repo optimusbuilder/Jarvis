@@ -131,57 +131,88 @@ export async function setSystemVolume(volumeTarget: number): Promise<string> {
   return `System volume set to ${vol}%`;
 }
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
 /**
- * Sends an iMessage to a contact by looking up their name in the Contacts app first.
+ * Sends an iMessage to a contact by finding their number using the native macOS Contacts framework.
  */
 export async function sendIMessage(contactName: string, message: string): Promise<string> {
-  // 1. Look up the phone number robustly using JXA
-  const lookupScript = `
-    var app = Application("Contacts");
-    
-    // Try exact match first
-    var people = app.people.whose({name: "${contactName}"})();
-    
-    // If no exact match, try partial match (contains)
-    if (people.length === 0) {
-        people = app.people.whose({name: {_contains: "${contactName}"}})();
-    }
-    
-    if (people.length === 0) {
-        throw new Error("Could not find any contact matching '${contactName}'");
-    }
-    
-    var person = people[0];
-    var resolvedName = person.name();
-    
-    if (person.phones().length === 0) {
-        throw new Error("Contact '" + resolvedName + "' has no phone numbers saved");
-    }
-    
-    var targetNumber = person.phones()[0].value();
-    JSON.stringify({name: resolvedName, number: targetNumber});
-  `;
+  const swiftScript = `
+import Contacts
+import Foundation
 
-  const { stdout: lookupOut, stderr: lookupErr } = await execFileAsync("osascript", ["-l", "JavaScript", "-e", lookupScript]);
+let args = CommandLine.arguments
+if args.count < 2 { exit(1) }
+let searchTerm = args[1].lowercased()
 
-  if (lookupErr && !lookupOut) {
-    throw new Error(lookupErr);
+let store = CNContactStore()
+let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey] as [CNKeyDescriptor]
+let request = CNContactFetchRequest(keysToFetch: keys)
+var bestMatch: (name: String, number: String)? = nil
+
+do {
+    try store.enumerateContacts(with: request) { (contact, stop) in
+        let fullName = "\\(contact.givenName) \\(contact.familyName)".trimmingCharacters(in: .whitespaces)
+        if fullName.lowercased().contains(searchTerm) {
+            for phone in contact.phoneNumbers {
+                bestMatch = (name: fullName, number: phone.value.stringValue)
+                stop.pointee = true
+                break
+            }
+        }
+    }
+} catch { exit(1) }
+
+if let match = bestMatch {
+    let nameEsc = match.name.replacingOccurrences(of: "\\"", with: "\\\\\\\"")
+    let numEsc = match.number.replacingOccurrences(of: "\\"", with: "\\\\\\\"")
+    print("{\\"name\\": \\"\\(nameEsc)\\", \\"number\\": \\"\\(numEsc)\\"}")
+} else {
+    print("NOT_FOUND")
+}
+`;
+
+  // Write temporary swift script
+  const tmpPath = path.join(os.tmpdir(), `jarvis_contact_${Date.now()}.swift`);
+  await fs.promises.writeFile(tmpPath, swiftScript, 'utf8');
+
+  let lookupOut = "";
+  try {
+    const { stdout, stderr } = await execFileAsync("swift", [tmpPath, contactName]);
+    lookupOut = stdout.trim();
+    if (stderr && !lookupOut) throw new Error(stderr);
+  } finally {
+    await fs.promises.unlink(tmpPath).catch(() => { });
   }
 
-  const contactInfo = JSON.parse(lookupOut.trim());
+  if (lookupOut === "NOT_FOUND" || !lookupOut) {
+    throw new Error(`Could not find any contact matching '${contactName}' in your Contacts.`);
+  }
+
+  const contactInfo = JSON.parse(lookupOut);
   const safeName = contactInfo.name;
 
-  // Normalize the number: keep only '+' and digits (e.g. "+1 (555) 123-4567" -> "+15551234567")
+  // Normalize the number: keep only '+' and digits
   const rawNumber = contactInfo.number || "";
-  const normalizedNumber = rawNumber.replace(/[^\d+]/g, "");
+  const normalizedNumber = rawNumber.replace(/[^\\d+]/g, "");
 
-  // 2. Send the message using pure AppleScript (much more reliable for Messages syntax)
-  const sendScript = `tell application "Messages" to send "${message.replace(/"/g, '\\"')}" to participant "${normalizedNumber}"`;
-  const { stderr: sendErr } = await execFileAsync("osascript", ["-e", sendScript]);
+  // Send the message using pure AppleScript, explicitly forcing the "iMessage" service
+  const safeMessage = message.replace(/"/g, '\\"');
+  const sendScript = `
+    tell application "Messages"
+      set targetService to 1st service whose service type = iMessage
+      set targetBuddy to buddy "${normalizedNumber}" of targetService
+      send "${safeMessage}" to targetBuddy
+    end tell
+  `;
 
-  if (sendErr) {
-    throw new Error("Failed to send message to " + safeName + ": " + sendErr);
+  try {
+    const { stderr: sendErr } = await execFileAsync("osascript", ["-e", sendScript]);
+    if (sendErr) throw new Error(sendErr);
+    return `Sent message to ${safeName}`;
+  } catch (e: any) {
+    throw new Error("Failed to send message to " + safeName + ": " + e.message);
   }
-
-  return `Sent message to ${safeName}`;
 }
